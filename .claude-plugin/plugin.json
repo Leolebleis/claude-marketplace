@@ -1,8 +1,0 @@
-{
-  "name": "claude-config",
-  "description": "Personal Claude Code plugin with shared skills",
-  "version": "1.0.0",
-  "author": {
-    "name": "Leo"
-  }
-}

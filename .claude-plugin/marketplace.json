@@ -1,6 +1,8 @@
 {
   "name": "Leolebleis",
-  "owner": { "name": "Leo" },
+  "owner": {
+    "name": "Leo"
+  },
   "plugins": [
     {
       "name": "claude-config",
