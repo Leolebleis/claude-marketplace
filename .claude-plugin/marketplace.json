@@ -1,0 +1,12 @@
+{
+  "name": "Leolebleis",
+  "owner": { "name": "Leo" },
+  "plugins": [
+    {
+      "name": "claude-config",
+      "source": ".",
+      "description": "Personal Claude Code plugin with shared skills",
+      "version": "1.0.0"
+    }
+  ]
+}
