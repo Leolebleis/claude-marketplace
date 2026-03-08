@@ -101,8 +101,10 @@ If you used custom skills this session and `OTEL_EXPORTER_OTLP_ENDPOINT` is set,
 ```bash
 curl -s -X POST http://<OBSERVER_HOST>:3500/observer/api/enrich \
   -H 'Content-Type: application/json' \
-  -d '{"session_id":"<your session ID>","skill":"<primary skill used>","confidence":<0.0-1.0>,"blockers_hit":<int>,"user_corrections":<int>,"goal_completion":"<full|partial|failed>","notes":"<one sentence>"}'
+  -d '{"session_id":"<your session ID>","confidence":<0.0-1.0>,"blockers_hit":<int>,"user_corrections":<int>,"goal_completion":"<full|partial|failed>","notes":"<one sentence>"}'
 ```
+
+Note: Do NOT pass a `skill` field -- the observer stores fully qualified skill names (e.g. `frontend-design:frontend-design`) which are hard to match. Omitting it enriches all skill_runs for the session at once.
 
 Keep this lightweight -- one curl call, ~50 tokens of reasoning. Skip if the observer is unreachable.
 
