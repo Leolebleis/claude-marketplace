@@ -8,7 +8,7 @@
       "name": "claude-config",
       "source": "./",
       "description": "Personal Claude Code plugin with shared skills",
-      "version": "1.2.0"
+      "version": "1.3.0"
     }
   ]
 }

@@ -19,6 +19,7 @@ README.md                         # Public-facing install instructions
 | french-writing | Auto-invoked for French text. Accents, contractions, tone. |
 | precompact | Pre-compaction context preservation + Workflow Observer enrichment. |
 | observer-setup | OTEL telemetry setup for new machines. |
+| pc-performance-audit | Remote Windows PC performance audit via SSH. |
 
 ## Hooks
 
