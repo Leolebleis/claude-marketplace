@@ -1,15 +1,21 @@
 ---
 name: pc-performance-audit
-description: "Use when the user wants to diagnose performance issues on a remote Windows PC via SSH, optimize a gaming setup, audit system resources, find what's eating RAM or CPU, check for bloatware, or improve FPS. Also use when the user provides an SSH connection to a Windows machine and mentions performance, lag, stuttering, FPS, or slow boot."
+description: "Use when the user wants to diagnose performance issues on a Windows PC, optimize a gaming setup, audit system resources, find what's eating RAM or CPU, check for bloatware, or improve FPS. Applies to both local machines and remote PCs via SSH."
 ---
 
 # PC Performance Audit
 
-Audit a remote Windows PC via SSH. Identify bottlenecks, produce a ranked fix plan with exact apply/verify/rollback commands per fix. Apply fixes one at a time with verification between each.
+Audit a Windows PC for performance bottlenecks. Produce a ranked fix plan with exact apply/verify/rollback commands. Apply fixes one at a time with verification between each.
+
+Works both **locally** (commands run directly) and **remotely** (commands prefixed with an SSH connection string).
 
 ## Input
 
-The user provides an SSH connection string (e.g., `ssh -i key user@host`). Use it as a prefix for every remote command.
+Determine whether this is a local or remote audit:
+- **Remote:** The user provides an SSH connection string (e.g., `ssh -i key user@host`). Prefix every command with it.
+- **Local:** The target is the current machine. Run commands directly. Note: `powercfg` and some Windows commands may need to be wrapped in `powershell -Command "..."` when running from a bash shell. Some commands need admin — use `gsudo` if available, otherwise note that admin is required.
+
+For remote audits, `$` variables in PowerShell commands will be eaten by bash — write `.ps1` script files and execute them via `powershell -ExecutionPolicy Bypass -File script.ps1` instead.
 
 ## Step 1: Gather Data
 
@@ -47,8 +53,9 @@ Run all diagnostic groups **in parallel** — they're independent reads. Parse t
 # Available power plans
 "powercfg /list"
 
-# Page file config
+# Page file — location, size, usage (check which drive it's on + free space on that drive)
 "powershell -Command \"Get-CimInstance Win32_PageFileUsage | Select-Object Name, AllocatedBaseSize, CurrentUsage, PeakUsage | Format-List\""
+"powershell -Command \"Get-ItemProperty 'HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager\Memory Management' | Select-Object PagingFiles | Format-List\""
 
 # CPU clock + load snapshot
 "wmic cpu get CurrentClockSpeed,LoadPercentage /format:list"
@@ -67,7 +74,7 @@ Run all diagnostic groups **in parallel** — they're independent reads. Parse t
 # Key services
 "powershell -Command \"Get-Service SysMain, DiagTrack, WSearch | Select-Object Name, DisplayName, Status, StartType | Format-Table -AutoSize\""
 
-# Nahimic (MSI bloatware — may not exist)
+# Nahimic (OEM audio bloatware — may not exist on non-OEM builds)
 "sc query NahimicService 2>NUL & sc qc NahimicService 2>NUL"
 ```
 
@@ -129,9 +136,9 @@ Every fix MUST include:
 **Needs reboot:** Yes/No
 **Needs user's hands:** Yes/No
 
-**Apply:**  <exact SSH command>
-**Verify:** <exact SSH command + expected output>
-**Rollback:** <exact SSH command to undo>
+**Apply:**  <exact command>
+**Verify:** <exact command + expected output>
+**Rollback:** <exact command to undo>
 ```
 
 ## Step 5: Execute

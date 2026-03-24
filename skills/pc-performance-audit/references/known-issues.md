@@ -4,11 +4,11 @@ Detection patterns, impact ratings, and fix commands for common Windows PC perfo
 
 ## Power Plan on Balanced
 
-**Detection:** `powercfg /getactivescheme` returns a GUID that is NOT the "High Performance" or "Ultimate Performance" plan. French systems show "Utilisation normale".
+**Detection:** `powercfg /getactivescheme` returns a GUID that is NOT the "High Performance" or "Ultimate Performance" plan. The plan name varies by OS language (e.g., "Balanced", "Utilisation normale", "Ausgeglichen").
 
-**Impact:** CRITICAL — CPU stays at base clock even under heavy load. On laptops, this can mean 2.7 GHz instead of 4.5 GHz — a 40-60% performance loss in CPU-bound games.
+**Impact:** CRITICAL — CPU stays at base clock even under heavy load. On laptops this can mean 40-60% less single-thread performance. Desktops are less affected but still lose boost headroom.
 
-**Why it happens:** Windows defaults to Balanced. Many users believe their laptop's "performance mode" fan profile equals the Windows power plan, but they're independent settings.
+**Why it happens:** Windows defaults to Balanced. On laptops, users often confuse the OEM fan/performance profile (keyboard shortcut or vendor software) with the Windows power plan — they're independent settings.
 
 **Apply:**
 ```bash
@@ -37,11 +37,11 @@ Detection patterns, impact ratings, and fix commands for common Windows PC perfo
 
 ---
 
-## Nahimic (MSI Audio Bloatware)
+## Nahimic (OEM Audio Bloatware)
 
 **Detection:** `sc query NahimicService` returns RUNNING. Typically 5 processes: Nahimic3.exe, NahimicSvc64.exe, NahimicSvc32.exe, nahimicNotifSys.exe, NahimicAPO4Volume.exe. Total ~70-80 MB.
 
-**Impact:** HIGH — Known to cause DPC latency spikes and microstutters. The audio "3D surround" processing hooks into the Windows audio pipeline and interferes with game audio timing. Ironically, disabling it improves audio quality for real audio production work.
+**Impact:** HIGH — Known to cause DPC latency spikes and microstutters. Ships on MSI, Lenovo, Dell, and other OEM systems. The audio "3D surround" processing hooks into the Windows audio pipeline and interferes with game audio timing. Disabling it actually improves audio quality for real audio production work.
 
 **Apply:**
 ```bash
@@ -104,7 +104,7 @@ The `03` prefix means disabled. `02` means enabled.
 "reg add \"HKCU\Software\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved\Run\" /v \"<ENTRY_NAME>\" /t REG_BINARY /d 0200000000000000000000000000000000 /f"
 ```
 
-**Important:** Always check which programs the user actually needs. Gaming stack (Steam, Discord, FACEIT) should stay. Audio production tools can be disabled from auto-start if they launch on demand with the DAW/hardware.
+**Important:** Always ask which programs the user actually needs at boot. Common keepers: Steam, Discord, game anti-cheats (FACEIT, Vanguard), peripheral software (Logitech, Razer). Everything else can usually be launched on demand.
 
 ---
 
@@ -152,14 +152,47 @@ The `03` prefix means disabled. `02` means enabled.
 
 ## High Swap / Page File Usage
 
-**Detection:** Compare `FreePhysicalMemory` with `TotalVisibleMemorySize` from `wmic OS`. Check `Win32_PageFileUsage` for current and peak swap usage. Swap > 1 GB active during gaming = problem.
+**Detection:** Compare `FreePhysicalMemory` with `TotalVisibleMemorySize` from `wmic OS`. Check `Win32_PageFileUsage` for current and peak swap usage. Swap > 1 GB active during gaming = problem. Also check WHERE the page file lives — `Get-CimInstance Win32_PageFileUsage | Select-Object Name` — and how much free space that drive has.
 
-**Impact:** Varies — Causes random hitches when pages swap to/from disk. Especially bad if page file is on HDD.
+**Impact:** Varies — Causes random hitches when pages swap to/from disk. Especially bad if page file is on a drive with low free space (can't grow) or on an HDD. A page file on a nearly-full drive can cause multi-second freezes when Windows can't allocate swap fast enough.
 
 **Fixes:**
-1. Reduce memory pressure (disable bloat, reduce game settings)
-2. Ensure page file is on SSD, not HDD
+1. Move page file to the drive with the most free space (if it's on a cramped OS drive)
+2. Reduce memory pressure (disable bloat, reduce game settings)
 3. Long-term: RAM upgrade
+
+**Moving the page file via PowerShell (requires admin):**
+```powershell
+# Save as .ps1 and run with: gsudo powershell -ExecutionPolicy Bypass -File script.ps1
+
+# Disable automatic management
+$cs = Get-CimInstance Win32_ComputerSystem
+$cs | Set-CimInstance -Property @{AutomaticManagedPagefile = $false}
+
+# Remove page file from old drive (replace <OLD> with actual drive letter)
+$pf = Get-CimInstance -Query "SELECT * FROM Win32_PageFileSetting WHERE Name = '<OLD>:\\pagefile.sys'"
+if ($pf) { $pf | Remove-CimInstance }
+
+# Create on new drive (replace <NEW> with target drive letter)
+# Must create first, then set size separately — New-CimInstance has a type bug with InitialSize
+New-CimInstance -ClassName Win32_PageFileSetting -Property @{Name = '<NEW>:\pagefile.sys'}
+$pf = Get-CimInstance -Query "SELECT * FROM Win32_PageFileSetting WHERE Name = '<NEW>:\\pagefile.sys'"
+$pf | Set-CimInstance -Property @{InitialSize = [uint32]8192; MaximumSize = [uint32]8192}
+```
+
+**Sizing:** For 16 GB RAM: 8 GB page file. For 32 GB RAM: 8 GB. Fixed size (min=max) is better on SSDs — avoids constant resize writes.
+
+**Verify:** `Get-CimInstance Win32_PageFileSetting | Format-List Name, InitialSize, MaximumSize`
+
+**Reboot required** for changes to take effect.
+
+**Rollback:**
+```powershell
+# Re-enable automatic management
+$cs = Get-CimInstance Win32_ComputerSystem
+$cs | Set-CimInstance -Property @{AutomaticManagedPagefile = $true}
+# Reboot — Windows recreates system-managed page file
+```
 
 ---
 
