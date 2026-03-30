@@ -20,6 +20,13 @@ README.md                         # Public-facing install instructions
 | precompact | Pre-compaction context preservation + Workflow Observer enrichment. |
 | observer-setup | OTEL telemetry setup for new machines. |
 | pc-performance-audit | Remote Windows PC performance audit via SSH. |
+| google-tasks | Manage Google Tasks -- list, create, complete, update, search. |
+
+## MCP Servers (configured locally per machine, not in plugin)
+
+| Server | Purpose |
+|--------|---------|
+| google_workspace_tasks | Google Tasks via `workspace-mcp` (taylorwilsdon/google_workspace_mcp). Config in `~/.claude/settings.json` with OAuth creds. |
 
 ## Hooks
 

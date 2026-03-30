@@ -1,6 +1,6 @@
 # claude-config
 
-Personal Claude Code plugin with shared skills.
+Personal Claude Code plugin with shared skills and MCP servers.
 
 ## Install
 
@@ -14,6 +14,7 @@ claude plugin install Leolebleis/claude-config
 - **precompact** -- Pre-compaction context preservation. Run before compacting to persist valuable conversation context.
 - **observer-setup** -- Set up OTEL telemetry export for Claude Code on a new machine.
 - **pc-performance-audit** -- Audit a remote Windows PC via SSH for performance bottlenecks. Diagnoses CPU, RAM, GPU, storage, bloatware, and produces a ranked fix plan with apply/verify/rollback commands.
+- **google-tasks** -- Manage Google Tasks. List, create, complete, update, search tasks.
 
 ## Session Guidance (auto-injected)
 
