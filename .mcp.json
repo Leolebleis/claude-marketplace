@@ -1,0 +1,9 @@
+{
+  "mcpServers": {
+    "google-tasks": {
+      "type": "stdio",
+      "command": "bash",
+      "args": ["${CLAUDE_PLUGIN_ROOT}/mcp-servers/google-tasks.sh"]
+    }
+  }
+}
