@@ -7,6 +7,7 @@ Personal Claude Code plugin marketplace (`Leolebleis/claude-config`).
 ```
 .claude-plugin/marketplace.json   # Plugin metadata + version
 skills/<name>/SKILL.md            # One directory per skill
+configs/<name>/                   # Backup configs for external tools
 hooks/                            # SessionStart hooks (context injection)
 md-hygiene.md                     # Session guidance (injected at session start via hook)
 README.md                         # Public-facing install instructions

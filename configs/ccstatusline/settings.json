@@ -1,0 +1,109 @@
+{
+  "version": 3,
+  "lines": [
+    [
+      {
+        "id": "ece53711-4dc6-432e-b55f-79e6bac60f11",
+        "type": "total-speed",
+        "backgroundColor": "bgBrightBlack",
+        "rawValue": true,
+        "metadata": {
+          "windowSeconds": "120"
+        }
+      },
+      {
+        "id": "c612ea11-e4e3-44b9-9d87-6d23e8200611",
+        "type": "session-usage",
+        "backgroundColor": "bgRed",
+        "rawValue": true,
+        "metadata": {
+          "display": "progress-short"
+        }
+      },
+      {
+        "id": "1ba94d51-6f05-4e02-ad80-9bb1ffd06160",
+        "type": "reset-timer",
+        "backgroundColor": "bgBrightMagenta",
+        "metadata": {
+          "display": "time"
+        }
+      }
+    ],
+    [
+      {
+        "id": "047f81fb-282e-4574-b4b3-3ab7ff010f3d",
+        "type": "git-root-dir",
+        "backgroundColor": "bgCyan"
+      },
+      {
+        "id": "fa93eace-9f0c-4100-a78a-92f19666eeb4",
+        "type": "git-branch",
+        "backgroundColor": "bgGreen"
+      },
+      {
+        "id": "3adb53a4-c930-4439-a09d-0ae04ef67f18",
+        "type": "git-changes",
+        "backgroundColor": "bgBrightBlue"
+      },
+      {
+        "id": "30c538bf-5bda-403a-8c0e-b94a6138cf7d",
+        "type": "current-working-dir",
+        "backgroundColor": "bgRed",
+        "rawValue": true,
+        "metadata": {
+          "abbreviateHome": "true",
+          "segments": "2"
+        }
+      }
+    ],
+    [
+      {
+        "id": "6abfb2ca-4c32-4b9b-b0c9-4c6431291ba4",
+        "type": "custom-command",
+        "backgroundColor": "bgBlue",
+        "commandPath": "hostname",
+        "preserveColors": false
+      },
+      {
+        "id": "0773fc3e-a6cc-4850-88a2-d03de4f4c018",
+        "type": "context-length",
+        "backgroundColor": "bgMagenta",
+        "rawValue": true
+      },
+      {
+        "id": "a1d5a275-e849-463d-b818-707b23f40ce5",
+        "type": "skills",
+        "backgroundColor": "bgBrightCyan",
+        "metadata": {
+          "mode": "list",
+          "listLimit": "5",
+          "hideWhenEmpty": "true"
+        },
+        "rawValue": true
+      }
+    ]
+  ],
+  "flexMode": "full-until-compact",
+  "compactThreshold": 60,
+  "colorLevel": 3,
+  "defaultPadding": " ",
+  "inheritSeparatorColors": false,
+  "globalBold": false,
+  "powerline": {
+    "enabled": true,
+    "separators": [
+      ""
+    ],
+    "separatorInvertBackground": [
+      false
+    ],
+    "startCaps": [
+      ""
+    ],
+    "endCaps": [
+      ""
+    ],
+    "theme": "nord-aurora",
+    "autoAlign": false
+  }
+}
