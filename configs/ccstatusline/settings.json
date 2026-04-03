@@ -92,16 +92,16 @@
   "powerline": {
     "enabled": true,
     "separators": [
-      ""
+      ""
     ],
     "separatorInvertBackground": [
       false
     ],
     "startCaps": [
-      ""
+      ""
     ],
     "endCaps": [
-      ""
+      ""
     ],
     "theme": "nord-aurora",
     "autoAlign": false
