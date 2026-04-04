@@ -1,12 +1,12 @@
 {
-  "name": "claude-marketplace",
+  "name": "leo-skills",
   "description": "Personal Claude Code skills",
   "owner": {
     "name": "Leo"
   },
   "plugins": [
     {
-      "name": "claude-marketplace",
+      "name": "leo-skills",
       "source": "./",
       "description": "Personal Claude Code skills",
       "version": "2.0.0"
