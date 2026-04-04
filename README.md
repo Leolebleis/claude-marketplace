@@ -1,27 +1,15 @@
-# claude-config
+# claude-marketplace
 
-Personal Claude Code plugin with shared skills and MCP servers.
+Personal Claude Code skills.
 
 ## Install
 
 ```bash
-claude plugin install Leolebleis/claude-config
+claude plugin install Leolebleis/claude-marketplace
 ```
 
 ## Skills
 
 - **french-writing** -- Auto-invoked when writing French text. Accent rules, contractions, gaming terms, tone guidelines.
-- **observer-setup** -- Set up OTEL telemetry export for Claude Code on a new machine.
-- **pc-performance-audit** -- Audit a remote Windows PC via SSH for performance bottlenecks. Diagnoses CPU, RAM, GPU, storage, bloatware, and produces a ranked fix plan with apply/verify/rollback commands.
 - **google-tasks** -- Manage Google Tasks. List, create, complete, update, search tasks.
-- **marketplace-feedback** -- Act on cross-session feedback about marketplace skills/config. Finds the repo locally, applies the fix and raises a PR, or files an issue if the repo isn't available.
-
-## Session Guidance (auto-injected)
-
-At session start, the plugin injects guidance so Claude suggests the right skill at natural checkpoints:
-
-- `/revise-claude-md` -- after productive sessions with new learnings
-- `/claude-md-improver` -- when entering a repo or auditing CLAUDE.md quality
-- `/skill-creator` -- after creating or modifying skills
-- `/claude-automation-recommender` -- when setting up Claude Code for a new project
-- `/simplify` -- before creating a PR (code reuse, quality, efficiency review)
+- **pc-performance-audit** -- Audit a remote Windows PC via SSH for performance bottlenecks. Diagnoses CPU, RAM, GPU, storage, bloatware, and produces a ranked fix plan with apply/verify/rollback commands.

@@ -28,7 +28,7 @@ If no list exists yet, create one on first meaningful work (not quick questions)
 | Directory | List Name |
 |-----------|-----------|
 | `hip/` | Hip Management |
-| `claude-config/` | Claude Config |
+| `claude-marketplace/` | Claude Marketplace |
 | `disqt.com/` | Disqt Server |
 | `raspberrypi/` | Raspberry Pi |
 

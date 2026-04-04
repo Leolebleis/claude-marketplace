@@ -5,10 +5,10 @@
   },
   "plugins": [
     {
-      "name": "claude-config",
+      "name": "claude-marketplace",
       "source": "./",
-      "description": "Personal Claude Code plugin with shared skills",
-      "version": "1.7.0"
+      "description": "Personal Claude Code skills",
+      "version": "2.0.0"
     }
   ]
 }
