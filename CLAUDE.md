@@ -18,7 +18,6 @@ README.md                         # Public-facing install instructions
 | Skill | Purpose |
 |-------|---------|
 | french-writing | Auto-invoked for French text. Accents, contractions, tone. |
-| precompact | Pre-compaction context preservation + Workflow Observer enrichment. |
 | observer-setup | OTEL telemetry setup for new machines. |
 | pc-performance-audit | Remote Windows PC performance audit via SSH. |
 | google-tasks | Manage Google Tasks -- list, create, complete, update, search. |

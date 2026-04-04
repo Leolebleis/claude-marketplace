@@ -1,16 +1,16 @@
 #!/usr/bin/env bash
 # SessionStart hook for claude-config plugin
-# Injects MD hygiene guidance into every session
+# Injects session guidance into every session
 
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 PLUGIN_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 
-# Read MD hygiene guidance
+# Read session guidance
 md_hygiene_content=$(cat "${PLUGIN_ROOT}/md-hygiene.md" 2>&1 || echo "Error reading md-hygiene.md")
 
-# Escape string for JSON embedding using bash parameter substitution
+# Escape string for JSON embedding using bash parameter substitution.
 escape_for_json() {
     local s="$1"
     s="${s//\\/\\\\}"
@@ -22,24 +22,17 @@ escape_for_json() {
 }
 
 md_hygiene_escaped=$(escape_for_json "$md_hygiene_content")
-session_context="**At natural checkpoints, suggest the appropriate skill from the guide below. Never auto-invoke precompact.**\n\n${md_hygiene_escaped}"
 
-# Output context injection as JSON
-if [ -n "${CLAUDE_PLUGIN_ROOT:-}" ]; then
-  cat <<EOF
-{
-  "hookSpecificOutput": {
-    "hookEventName": "SessionStart",
-    "additionalContext": "${session_context}"
-  }
-}
-EOF
+# Output context injection as JSON.
+# Use printf instead of heredoc to avoid bash 5.3+ hang.
+# Platform detection: Claude Code (CLAUDE_PLUGIN_ROOT), Cursor (CURSOR_PLUGIN_ROOT),
+# Copilot CLI (COPILOT_CLI).
+if [ -n "${CURSOR_PLUGIN_ROOT:-}" ]; then
+  printf '{\n  "additional_context": "%s"\n}\n' "$md_hygiene_escaped"
+elif [ -n "${CLAUDE_PLUGIN_ROOT:-}" ] && [ -z "${COPILOT_CLI:-}" ]; then
+  printf '{\n  "hookSpecificOutput": {\n    "hookEventName": "SessionStart",\n    "additionalContext": "%s"\n  }\n}\n' "$md_hygiene_escaped"
 else
-  cat <<EOF
-{
-  "additional_context": "${session_context}"
-}
-EOF
+  printf '{\n  "additionalContext": "%s"\n}\n' "$md_hygiene_escaped"
 fi
 
 exit 0
