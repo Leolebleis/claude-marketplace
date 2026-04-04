@@ -21,6 +21,7 @@ README.md                         # Public-facing install instructions
 | observer-setup | OTEL telemetry setup for new machines. |
 | pc-performance-audit | Remote Windows PC performance audit via SSH. |
 | google-tasks | Manage Google Tasks -- list, create, complete, update, search. |
+| marketplace-feedback | Act on feedback about marketplace skills/config -- find repo, apply fix, raise PR or issue. |
 
 ## MCP Servers (configured locally per machine, not in plugin)
 

@@ -14,6 +14,7 @@ claude plugin install Leolebleis/claude-config
 - **observer-setup** -- Set up OTEL telemetry export for Claude Code on a new machine.
 - **pc-performance-audit** -- Audit a remote Windows PC via SSH for performance bottlenecks. Diagnoses CPU, RAM, GPU, storage, bloatware, and produces a ranked fix plan with apply/verify/rollback commands.
 - **google-tasks** -- Manage Google Tasks. List, create, complete, update, search tasks.
+- **marketplace-feedback** -- Act on cross-session feedback about marketplace skills/config. Finds the repo locally, applies the fix and raises a PR, or files an issue if the repo isn't available.
 
 ## Session Guidance (auto-injected)
 
