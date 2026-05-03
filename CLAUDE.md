@@ -31,3 +31,4 @@ README.md                         # Public-facing install instructions
 - **Always increment the version** in `.claude-plugin/marketplace.json` when modifying skills or adding new ones. Use semver: patch for fixes, minor for new skills or features, major for breaking changes.
 - **Never push directly to main.** Create a branch and open a PR.
 - **Update README.md** when adding or removing skills.
+- **Update the Skills table in this CLAUDE.md** when adding or removing skills.
