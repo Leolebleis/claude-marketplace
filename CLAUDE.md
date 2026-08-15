@@ -19,6 +19,7 @@ README.md                         # Public-facing install instructions
 | pc-performance-audit | Remote Windows PC performance audit via SSH. System-level: services, RAM/CPU/disk, bloatware, OS state, ASUS Armoury Crate, HVCI/HAGS. |
 | game-tuning | Per-game optimization: G-Sync 101 stack, DLSS/Frame Gen, Reflex, per-app NVCP profiles, launch options, in-game settings. CS2 cookbook in references/. |
 | solved-problem | Prior-art research before building custom. Parallel subagents across GitHub/Reddit/HN/awesome-lists/blogs, ranked tools with pros/cons, recommendation. |
+| service-oriented-architecture | Clean Architecture for backend services. Domain-first folders, layer protocols, tiered mappers, immutable entities, typed outcome unions, lightweight CRUD mode, import-linter enforcement. |
 
 ## MCP Servers (configured locally per machine, not in plugin)
 
