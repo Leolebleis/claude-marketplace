@@ -1,343 +1,182 @@
 ---
 name: service-oriented-architecture
-description: "Use when building APIs, web services, or backend applications. Triggers on: creating a new service, adding endpoints, integrating external APIs, adding persistence, structuring a project. Enforces Clean Architecture with domain-first folder structure, strict layer separation, and explicit mapping between boundaries."
+description: "Use when building or extending a backend API or web service: creating a new service, adding endpoints, integrating an external API, adding persistence, or structuring a project. Also use on layer-coupling symptoms: ORM models or provider JSON leaking into business logic, framework HTTP errors (e.g. HTTPException) raised outside routers, circular imports between layers, or one model shared across router, service, and database."
 ---
 
 # Service Oriented Architecture
 
-Architectural guidelines for building services with Clean Architecture principles. Language-agnostic, with Python as the reference language.
+Architectural guidance for building services. Python/FastAPI is the reference stack; rules are stated by category (web framework, ORM, HTTP client) so they translate to other stacks.
 
-**Core principle:** Source code dependencies must point only inward, toward higher-level policies. Nothing in an inner circle can know anything about something in an outer circle.
+**Core principle:** Source code dependencies point only inward, toward higher-level policy. Nothing in an inner layer knows anything about an outer layer. Everything else here exists to enforce that rule or to stop it being over-applied.
 
-## When to Use
+**Not for:** one-off scripts, CLI tools, throwaway prototypes, or libraries.
 
-- Building a new API or web service
-- Adding endpoints, clients, or persistence to an existing service
-- Integrating external APIs or third-party services
-- Structuring or restructuring a project
-- Reviewing architecture decisions
+## Pick the Mode First
 
-## When NOT to Use
+Pick the mode per domain folder when creating it — deployment status is irrelevant to the choice.
 
-- One-off scripts or CLI tools
-- Prototypes explicitly marked as throwaway
-- Libraries (not deployed services)
+**Lightweight mode** applies when ALL of these are true (observable facts, not judgment):
 
-## The Architecture Onion
+- Every operation is a direct create/read/update/delete/list over one table or resource
+- There is no business rule beyond field validation — no if-statement about domain state
+- The code calls no other service and no external API
+- It has a single internal consumer (admin tool, internal dashboard)
 
-Three layers, strict dependency direction: **API -> Domain <- Infrastructure**
+**Full mode** applies otherwise.
 
-```
-┌─────────────────────────────────────────────┐
-│  Outer: API Layer (routers, consumers)      │
-│  ┌─────────────────────────────────────────┐│
-│  │  Outer: Infrastructure (clients, DBs)   ││
-│  │  ┌─────────────────────────────────────┐││
-│  │  │  Inner: Domain (entities, services) │││
-│  │  └─────────────────────────────────────┘││
-│  └─────────────────────────────────────────┘│
-└─────────────────────────────────────────────┘
-```
+Lightweight shape: the transport layer calls the persistence protocol directly and does its own HTTP error translation — no service class, no outcome types, no API mapper. In Python: `router.py` + `dao.py` (protocol) + `persistence/`. The DAO still returns plain domain objects, never ORM rows, and the folder still gets its import contracts (see Verify below) — both modes, no exceptions.
 
-- The **Domain layer** is the most abstract and stable. It defines entities, services, and protocols. It knows nothing about HTTP, databases, or external APIs.
-- The **Infrastructure layer** implements domain protocols. It contains concrete clients, database classes, and mappers to/from domain entities.
-- The **API layer** is the most concrete and unstable. It handles HTTP request/response models, routing, and maps between API models and domain entities.
+**Promotion is event-driven and per operation.** The first business-rule if-statement, the first external call, or a second consumer promotes that operation: add the service class and outcome type for it, and leave unpromoted operations calling the DAO from the router. Full-mode files appear as operations need them, not folder-wide.
 
-**Dependency rule:** Inner layers NEVER import from outer layers. The domain defines abstract protocols; infrastructure implements them. The API layer consumes domain services.
+## The Architecture Onion (full mode)
 
-## Screaming Architecture
+Three layers, strict dependency direction: **API -> Domain <- Infrastructure**. Deliberately three — the direction, not the count, is the rule.
 
-**Top-level folders are named by domain, not by technical concern.** The folder structure should scream what the application does, not what framework it uses.
+| Layer | Contains | May import | Must never import |
+|-------|----------|-----------|-------------------|
+| Domain (`model/`, `service.py`, `dao.py`, `facade.py`) | Entities, services, outcome types, protocols | Other domain code, stdlib | The web framework (`fastapi`), ORM/DB driver (`sqlalchemy`), HTTP client (`httpx`), API request/response models, anything in `persistence/` or `client/` |
+| Infrastructure (`persistence/`, `client/`) | Concrete DBs, HTTP clients, their DTOs and mapping | Domain entities and protocols, the ORM/HTTP libraries | The web framework, router code, API models |
+| API (`router.py`, `model/api/`) | Routes, request/response models, HTTP translation | Domain services, entities, outcomes | ORM, HTTP client, `persistence/`, `client/` |
 
-```dot
-digraph structure_decision {
-    "Choosing folder structure?" [shape=diamond];
-    "Can you tell what the app does\nfrom top-level folder names?" [shape=diamond];
-    "Domain-first: correct" [shape=box];
-    "Layer-first: WRONG\nRestructure by domain" [shape=box];
+The domain defines the protocols (`dao.py`, `facade.py`); infrastructure implements them. If a protocol lives next to its implementation, the dependency arrow points outward — that is the violation, wherever the file sits.
 
-    "Choosing folder structure?" -> "Can you tell what the app does\nfrom top-level folder names?";
-    "Can you tell what the app does\nfrom top-level folder names?" -> "Domain-first: correct" [label="yes"];
-    "Can you tell what the app does\nfrom top-level folder names?" -> "Layer-first: WRONG\nRestructure by domain" [label="no"];
-}
-```
+## Folder Structure
 
-### Example: Domain-First Structure
+Top-level folders are named by domain, not by technical concern — the tree should say what the service does (`bookmarks/`, `collections/`), not what framework it uses (`routers/`, `services/`).
 
 ```
 src/
-  profiles/
+  bookmarks/                  # full mode
     router.py
     service.py
-    mapper.py                   # API <-> Domain mapping
-    exceptions.py
+    mapper.py                 # API <-> domain (only once shapes diverge; see Mappers)
+    dao.py                    # persistence protocol (domain-level)
+    facade.py                 # external-service protocol (domain-level)
     dependencies.py
-    facade.py                   # abstract protocol (domain-level)
-    dao.py                      # abstract persistence protocol (domain-level)
     model/
+      bookmark.py             # domain entity + outcome types
       api/
         requests.py
         responses.py
-      profile.py                # domain entity
     client/
-      fellow_client.py          # concrete client (implements facade)
-      fellow_client_mapper.py   # provider JSON <-> domain entity
+      linkvault_client.py     # implements facade; maps provider payloads internally
     persistence/
-      profile_db.py             # concrete DB (implements dao)
-      profile_dto.py            # DB row representation
-      profile_db_mapper.py      # DTO <-> domain entity
-  schedules/
-    router.py
-    service.py
-    model/
-      ...
-    ...
-  device/
-    ...
+      bookmark_db.py          # implements dao; maps rows internally
+  flags/                      # lightweight mode: router.py, dao.py, persistence/
   config.py
   main.py
 ```
 
-Each top-level domain folder is a self-contained mini-API. If you were to extract it into its own service, you would only need to replace direct service calls with HTTP interfaces or event queues.
+Each domain folder is a self-contained mini-service: extracting it means replacing direct calls with an HTTP interface, nothing more. Anything outside a domain folder is shared plumbing (config, DB connection, base classes). Wire dependencies with the framework's built-in mechanism — factory functions in `dependencies.py` (FastAPI: `Depends`); no DI-container libraries.
 
-**Anything outside a domain folder** is a candidate for a common library: global config, database connection setup, abstract base classes shared across domains.
+## Entities: Immutable, With Behavior
 
-## Class Types and Naming Conventions
-
-Consistent suffixes make it immediately obvious what a class does.
-
-### Entities
-
-The most abstract models. Domain representations of business concepts. They sit at the inner core of the onion. They depend on nothing from outer layers.
+Entities are immutable and own their invariants and state transitions — in Python, frozen dataclasses. Transitions return new instances; never mutate, never let services rebuild entity state by hand.
 
 ```python
-# profiles/model/profile.py
 @dataclass(frozen=True)
-class Profile:
+class Bookmark:
     id: str
-    title: str
-    ratio: float
-    bloom_enabled: bool
-    # ... domain fields only, no HTTP or DB concepts
+    url: str
+    archived: bool
+
+    def archive(self) -> "Bookmark | AlreadyArchived":
+        if self.archived:
+            return AlreadyArchived(bookmark_id=self.id)
+        return replace(self, archived=True)
 ```
 
-### Services (suffix: `*Service`)
+If a service contains `replace(entity, ...)` or reconstructs an entity field-by-field to change its state, that logic belongs on the entity.
 
-Encapsulate business logic as use cases on domain entities. They depend on abstract protocols (DAOs, Facades), never on concrete infrastructure. They are the technical translation of product requirements.
+## Services and Typed Outcomes
+
+Services orchestrate use cases across entities and protocols.
+
+**Expected domain outcomes are returned as values; unexpected failures raise.** An outcome type is a union of frozen dataclasses — one per case, each named as a domain statement of what happened, each carrying only the data valid for that case:
 
 ```python
-# profiles/service.py
-class ProfileService:
-    def __init__(
-        self,
-        profile_dao: ProfileDAO,           # abstract, not concrete DB
-        fellow_facade: FellowClientFacade, # abstract, not concrete client
-    ) -> None: ...
+@dataclass(frozen=True)
+class ArchiveSucceeded:
+    bookmark: Bookmark
 
-    async def create_profile(self, request: ProfileCreateRequest) -> ProfileCreateResult:
-        # Business logic here. No HTTP concepts, no DB queries.
-        ...
+@dataclass(frozen=True)
+class BookmarkNotFound:
+    bookmark_id: str
+
+@dataclass(frozen=True)
+class SyncRejected:          # upstream sync system refused or was unreachable
+    detail: str
+
+ArchiveResult = ArchiveSucceeded | AlreadyArchived | BookmarkNotFound | SyncRejected
 ```
 
-Services return **typed outcomes**, not exceptions:
+Rules that make this pattern earn its cost:
+
+- **Only where at least two expected outcomes exist.** A single-case `SUCCESS` union is ceremony: return the entity directly and let unexpected errors raise.
+- **Names are domain statements** (`BookmarkNotFound`, `InsufficientFunds`), never generic (`ERROR`, `FAILED`, `INVALID`). The union is a reviewable, in-words statement of every case the code plans for — write it before implementing.
+- **No optional grab-bag fields.** `entity: X | None` + `error: str | None` on one class makes invalid states representable; the union makes them unconstructible.
+- **Exhaustiveness is enforced, not hoped for.** Every `match` ends with `case _: assert_never(result)` (`typing.assert_never`), so adding a case breaks the type check instead of silently returning `None`.
+- **Adapters raise, services translate.** Infrastructure (clients, DBs) raises its own exception types; the service catches those it expects and returns the corresponding outcome. Exceptions that reach the top are bugs or infra failures — let them surface.
+
+## Mappers: Mandatory at Infrastructure, On-Divergence at the API
+
+Two tiers, because the boundaries differ:
+
+- **Infrastructure boundaries (persistence, clients): mapping is mandatory.** No ORM row, provider payload, or raw dict crosses into the domain — the adapter accepts and returns domain entities only. Start with private `_to_entity`/`_to_dto` methods on the adapter; promote to a `*Mapper` class when the mapping is shared or outgrows a screenful. The mapping is internal to the adapter; services never see it.
+- **API boundary: introduce `mapper.py` the moment any field differs** between the API model and the domain entity in name, type, optionality, or shape — or when a request needs assembly beyond field copying. Until then, construct the response model directly from the entity in the router. Divergence is the trigger; do not pre-build identity mappers, and do not "simplify" an existing mapper away once shapes have diverged.
+
+Either way: typed models cross boundaries, never dicts. A dict is an implicit contract nobody can check.
+
+## Routers
+
+Thin: parse, delegate to one service call, translate the outcome to HTTP. Target under ~15 executable lines per handler. HTTP status decisions — framework HTTP errors and status codes (FastAPI: `HTTPException`) — exist only here (and in lightweight-mode routers). If a handler grows past that, logic has leaked in — move it to the service.
 
 ```python
-class ProfileCreateOutcome(Enum):
-    SUCCESS = "success"
-    NOT_FOUND = "not_found"
-    UPSTREAM_UNAVAILABLE = "upstream_unavailable"
-
-@dataclass
-class ProfileCreateResult:
-    outcome: ProfileCreateOutcome
-    profile: Profile | None = None
-    error: str | None = None
+match result:
+    case ArchiveSucceeded(bookmark=b):
+        return BookmarkAPIResponse.from_entity(b)
+    case AlreadyArchived():
+        raise HTTPException(status_code=409)
+    case BookmarkNotFound():
+        raise HTTPException(status_code=404)
+    case SyncRejected():
+        raise HTTPException(status_code=503)
+    case _:
+        assert_never(result)
 ```
 
-### Mappers (suffix: `*Mapper`)
+## Between Services
 
-Map one object to another across layer boundaries. Essential for decoupling. Without them, a new field in one layer propagates changes to every layer.
+- **One database, one service.** No other service touches it — schema coupling through a shared database is invisible and unbreakable. Share data through the owning service's API.
+- **No shared domain models.** Two services that both handle a `Condition` model own separate models and map at the API boundary, even if identical today — they change for different reasons.
+- **Compatibility lives in contract tests**, not in a shared library.
 
-```python
-# profiles/mapper.py
-class ProfileMapper:
-    @staticmethod
-    def to_api_response(profile: Profile) -> ProfileAPIResponse:
-        return ProfileAPIResponse(
-            id=profile.id,
-            title=profile.title,
-            ...
-        )
+When unsure how to split components or domains, arbitrate with the component cohesion and coupling principles (REP, CCP, CRP, ADP, SDP, SAP).
 
-    @staticmethod
-    def from_api_request(request: ProfileCreateAPIRequest) -> ProfileCreateRequest:
-        return ProfileCreateRequest(
-            title=request.title,
-            ...
-        )
-```
+## Verify the Boundaries Mechanically
 
-**Where mappers live:**
-- API <-> Domain mapping: in the domain folder's `mapper.py` (visible to router and service)
-- Infrastructure <-> Domain mapping: **internal to the infrastructure class**. Lives in `client/` or `persistence/` alongside the concrete implementation. The service never sees infrastructure mappers -- it only deals with domain entities.
+Prose rules drift; import contracts don't. Enforce the dependency rule with an import-boundary linter for the language, and treat a contract failure like a failing test. Python reference: [import-linter](https://pypi.org/project/import-linter/) — add one layers contract plus one framework-free contract per domain folder at folder creation (template in [references/patterns.md](references/patterns.md)), and run `lint-imports` after any structural change.
 
-### Clients and Facades (suffix: `*Client`, `*Facade`)
-
-Clients are concrete classes that talk to external APIs. They sit on the outer layer. **Services must never depend on clients directly.**
-
-Facades are abstract protocols that define what the domain needs from the outside world. **They live at the domain level** (e.g., `profiles/facade.py`), not alongside the concrete client. This ensures the dependency arrow points inward -- the domain defines the contract, infrastructure implements it.
-
-```python
-# profiles/facade.py (domain level -- defines what the domain needs)
-class FellowClientFacade(Protocol):
-    async def create_profile(self, profile: Profile) -> Profile: ...
-    async def get_profiles(self) -> list[Profile]: ...
-
-# profiles/client/fellow_client.py (infrastructure -- implements the facade)
-class FellowClient(FellowClientFacade):
-    def __init__(self, settings: Settings, mapper: FellowClientMapper) -> None: ...
-
-    async def create_profile(self, profile: Profile) -> Profile:
-        request = self._mapper.to_api_request(profile)
-        response = await self._http.post("/profiles", json=request)
-        return self._mapper.from_api_response(response.json())
-```
-
-**Why Facades?** If a third-party dependency updates their API, you create a new Client that implements the same Facade and swap it in your DI wiring. The service layer is untouched. This also makes testing trivial -- your mock just implements the Facade.
-
-**Infrastructure mappers are internal.** The `FellowClientMapper` lives inside `client/` and is used only by `FellowClient`. The service never sees it -- the client accepts and returns domain entities only.
-
-### Routers and Consumers
-
-Routers handle inbound HTTP. Consumers handle inbound events. Both sit on the outer layer. They map API models to domain models, call services, and map results back to API responses.
-
-```python
-# profiles/router.py
-@router.post("/profiles", status_code=201)
-async def create_profile(
-    request: ProfileCreateAPIRequest,
-    service: ProfileService = Depends(get_profile_service),
-    mapper: ProfileMapper = Depends(get_profile_mapper),
-) -> ProfileCreateAPIResponse:
-    domain_request = mapper.from_api_request(request)
-    result = await service.create_profile(domain_request)
-
-    match result.outcome:
-        case ProfileCreateOutcome.SUCCESS:
-            return mapper.to_api_response(result.profile)
-        case ProfileCreateOutcome.NOT_FOUND:
-            raise HTTPException(status_code=404, detail=result.error)
-        case ProfileCreateOutcome.UPSTREAM_UNAVAILABLE:
-            raise HTTPException(status_code=503, detail="Upstream service unavailable")
-```
-
-**Routers are thin.** They map, delegate, and map back. No business logic.
-
-### DB/DAO (suffix: `*DB`, `*DAO`)
-
-DAOs are abstract protocols defining persistence operations. **They live at the domain level** (e.g., `profiles/dao.py`), not inside `persistence/`. DBs are concrete implementations that live in `persistence/`. Services depend on DAOs, never on DBs.
-
-```python
-# profiles/dao.py (domain level -- defines what the domain needs)
-class ProfileDAO(Protocol):
-    async def create(self, profile: Profile) -> None: ...
-    async def get_by_id(self, profile_id: str) -> Profile | None: ...
-
-# profiles/persistence/profile_db.py (infrastructure -- implements the DAO)
-class ProfileDB(ProfileDAO):
-    def __init__(self, session: AsyncSession, mapper: ProfileDTOMapper) -> None: ...
-
-    async def create(self, profile: Profile) -> None:
-        dto = self._mapper.to_dto(profile)
-        self._session.add(dto)
-        await self._session.commit()
-```
-
-**Infrastructure mappers are internal.** The `ProfileDTOMapper` lives inside `persistence/` and is used only by `ProfileDB`. The service never sees DTOs or DB mappers -- it passes and receives domain entities only.
-
-## Six Architectural Principles
-
-These SOLID-for-APIs principles govern how components are built and split.
-
-### Component Cohesion
-
-1. **Reuse/Release Equivalence (REP):** Modules grouped together must share an overarching theme and be releasable together.
-2. **Common Closure (CCP):** Gather classes that change for the same reasons and at the same rate. Separate classes that change for different reasons.
-3. **Common Reuse (CRP):** Don't force users of a component to depend on things they don't need.
-
-### Component Coupling
-
-4. **Acyclic Dependencies (ADP):** No cycles in the dependency graph. Use dependency inversion (protocols) to break cycles.
-5. **Stable Dependencies (SDP):** Depend in the direction of stability. Volatile components (API layer) depend on stable components (domain), never the reverse.
-6. **Stable Abstractions (SAP):** A component should be as abstract as it is stable. Stable components should be extensible through abstraction.
-
-## Separate Models Per Layer
-
-**Be DRY within your components, not between them.**
-
-Each layer has its own models. Even if they look identical today, they change at different rates and for different reasons.
-
-| Layer | Model type | Example | Purpose |
-|-------|-----------|---------|---------|
-| API | Request/Response | `ProfileCreateAPIRequest` | HTTP contract with callers |
-| Domain | Entity | `Profile` | Core business object |
-| Infrastructure (DB) | DTO | `ProfileDTO` | Database row representation |
-| Infrastructure (Client) | API models | `FellowProfileRequest` | External API contract |
-
-**Never share a single model across layers.** This is the most common violation. Rationalizations include:
+## Red Flags — Stop and Re-check
 
 | Rationalization | Reality |
 |----------------|---------|
-| "The models are identical" | They are identical *today*. They will diverge. |
-| "It's just duplication" | It's intentional decoupling. DRY applies within components, not between layers. |
-| "It's premature abstraction" | It's not abstraction, it's isolation. The cost is a few lines of mapping. The cost of NOT doing it is coupled layers that break together. |
-| "Keep it simple" | Coupled layers are not simple. They are easy to start and hard to change. |
+| "The models are identical, share one" | Identical *today*. Layers change for different reasons; at infra boundaries, map anyway. |
+| "It's a deployed service, so full ceremony applies" | Mode is chosen by the lightweight predicates, not by deployment status. Check them first. |
+| "It's just CRUD, but I'll add the service layer to be safe" | A passthrough service is dead weight and hides the day it stops being CRUD. Lightweight mode, promote on the first rule. |
+| "One SUCCESS outcome keeps it consistent" | A single-case union states nothing. Return the entity; consistency is not ceremony. |
+| "Raise the HTTP error here, it's one line" | HTTP belongs to the router. The service reports what happened; the router decides what that means on the wire. |
+| "We'll clean it up later" | Later never has more budget than now. The seams already exist — use them. |
+| "Deadline, so skip the tests" | Tests are part of done in both modes. A lightweight-mode test is ten lines with a fake DAO. |
 
-## Common Mistakes
+## Troubleshooting
 
-### Putting the Protocol alongside the concrete class
-
-Protocols/Facades define what the domain needs. They live at the domain level (`facade.py`, `dao.py`), **not** inside `client/` or `persistence/` next to the infrastructure implementation. This ensures the dependency arrow points inward. If the protocol lives next to the concrete class, the domain imports from infrastructure -- a direct violation.
-
-### Using `dict` as an intermediate format
-
-Typed domain entities are the lingua franca between layers, not dicts. A dict-based intermediate format is untyped, invisible to the type checker, and creates an implicit contract that nobody can verify.
-
-### Skipping mappers for "simple" cases
-
-If two layers exchange data, there is a mapper. Even if the mapping is trivial today. The mapper is where future divergence will be handled. Without it, a schema change in one layer cascades to every other layer.
-
-### Layer-first folder structure
-
-```
-# WRONG - can't tell what this app does
-src/
-  routers/
-  services/
-  models/
-  clients/
-
-# RIGHT - this is a weather API
-src/
-  weather/
-  forecast/
-  alerts/
-```
+- **Circular import between service and persistence** — the protocol is missing or lives next to its implementation. Move it to domain level (`dao.py`); persistence imports the protocol, never the reverse.
+- **Service tests need a running database** — a concrete adapter leaked into the service. Inject the protocol; test with an in-memory fake.
+- **A new `match` case silently returns `None`** — missing `assert_never`. Add the `case _` arm and run the type checker.
+- **Adding one field touched five files** — if the operation is lightweight-eligible, you're in the wrong mode. If it's genuinely full-mode, that cost is the isolation working; check only whether the API tier actually diverged before keeping its mapper.
+- **Provider JSON shape appears in service code** (`result["data"]["nested"]`) — the client is leaking. It must return domain entities; mapping is internal to the adapter (BAD example in [references/patterns.md](references/patterns.md)).
 
 ## Testing
 
-Tests mirror the domain structure:
-
-```
-tests/
-  profiles/
-    test_router.py        # e2e: hits endpoints via test client
-    test_service.py       # unit: mock DAO and Facade
-    test_fellow_client.py # unit: mock HTTP (respx)
-  schedules/
-    ...
-```
-
-- **Router tests** are integration/e2e tests: they hit endpoints through the full stack
-- **Service tests** are unit tests: inject mock DAOs and Facades
-- **Client tests** are unit tests: mock HTTP calls at the transport level
+Tests mirror `src/` by domain. Service tests are unit tests with in-memory fakes implementing the protocols — no DB, no network, no mocks of concrete classes. Router tests hit endpoints through the app with fakes wired via dependency overrides. Adapter tests mock at the transport level. Worked examples, including a full fake-DAO test: [references/patterns.md](references/patterns.md).
