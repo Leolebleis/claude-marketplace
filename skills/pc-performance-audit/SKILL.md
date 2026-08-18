@@ -23,13 +23,15 @@ For remote audits, `$` variables in PowerShell commands will be eaten by bash �
 
 Run all diagnostic groups **in parallel** — they're independent reads. Parse the results and note everything for the report.
 
+**`wmic` is REMOVED on Windows 11 24H2+** — it fails with "not recognized" on any current build. Always use the `Get-CimInstance` forms below; `wmic` is at most a fallback on old Win10 targets.
+
 **Parallel batch hazards:** A single command in a parallel SSH batch returning exit 1 (e.g., `findstr` with no matches, `where` with no result) cancels the WHOLE batch. Wrap with `& exit 0` or use PowerShell `Where-Object`.
 
 ### Group A: Hardware
 
 ```bash
 # CPU
-"wmic cpu get Name,NumberOfCores,NumberOfLogicalProcessors,CurrentClockSpeed /format:list"
+"powershell -Command \"Get-CimInstance Win32_Processor | Select-Object Name, NumberOfCores, NumberOfLogicalProcessors | Format-List\""
 
 # RAM sticks (slot count, capacity, speed, dual/single channel)
 "powershell -Command \"Get-CimInstance Win32_PhysicalMemory | Select-Object DeviceLocator, Capacity, Speed, ConfiguredClockSpeed, Manufacturer | Format-Table -AutoSize\""
@@ -37,19 +39,18 @@ Run all diagnostic groups **in parallel** — they're independent reads. Parse t
 # GPU
 "powershell -Command \"Get-CimInstance Win32_VideoController | Select-Object Name, DriverVersion, DriverDate, AdapterRAM | Format-List\""
 
-# Disks (SSD vs HDD, model, size)
-"wmic diskdrive get Model,MediaType,Size,InterfaceType /format:list"
+# Disks (SSD vs HDD — Get-PhysicalDisk.MediaType is authoritative; Win32_DiskDrive.MediaType says 'Fixed hard disk media' for both)
+"powershell -Command \"Get-PhysicalDisk | Select-Object FriendlyName, MediaType, BusType, Size | Format-Table -AutoSize\""
 
 # Drive letters, free space
-"wmic logicaldisk get DeviceID,FreeSpace,Size,VolumeName,DriveType /format:csv"
+"powershell -Command \"Get-CimInstance Win32_LogicalDisk | Select-Object DeviceID, VolumeName, DriveType, FreeSpace, Size | Format-Table -AutoSize\""
 ```
 
 ### Group B: System State
 
 ```bash
 # RAM + swap usage
-"wmic OS get FreePhysicalMemory,TotalVisibleMemorySize /format:list"
-"wmic OS get FreeVirtualMemory,TotalVirtualMemorySize /format:list"
+"powershell -Command \"Get-CimInstance Win32_OperatingSystem | Select-Object FreePhysicalMemory, TotalVisibleMemorySize, FreeVirtualMemory, TotalVirtualMemorySize | Format-List\""
 
 # Active power plan
 "powercfg /getactivescheme"
@@ -62,7 +63,7 @@ Run all diagnostic groups **in parallel** — they're independent reads. Parse t
 "powershell -Command \"Get-ItemProperty 'HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager\Memory Management' | Select-Object PagingFiles | Format-List\""
 
 # CPU clock + load snapshot
-# WARNING: wmic cpu's CurrentClockSpeed/MaxClockSpeed returns the SMBIOS RATED clock, not the live boost clock.
+# WARNING: WMI's Win32_Processor CurrentClockSpeed/MaxClockSpeed returns the SMBIOS RATED clock, not the live boost clock.
 # Reading CurrentClockSpeed = MaxClockSpeed does NOT mean the CPU isn't boosting -- WMI just can't tell you.
 # Use PerfMon for real boost state (locale-aware names; see Diagnostic Traps in known-issues.md):
 "powershell -Command \"Get-Counter '\Processor Information(_Total)\% Processor Performance', '\Processor Information(_Total)\Processor Frequency', '\Processor Information(_Total)\Performance Limit Flags' -SampleInterval 1 -MaxSamples 2 -ErrorAction SilentlyContinue | ForEach-Object { $_.CounterSamples | ForEach-Object { Write-Host ($_.Path.Split('\\')[-1] + ' = ' + [math]::Round($_.CookedValue,1)) } }\""
@@ -79,9 +80,8 @@ Run all diagnostic groups **in parallel** — they're independent reads. Parse t
 ### Group C: Processes & Services
 
 ```bash
-# Top processes by memory — pipe through awk locally:
-# tr -d '\r' | awk -F',' 'NR>1 && $3!="" {name=$2; mb=$3/1048576; if(mb>30) printf "%8.0f MB  %s\n", mb, name}' | sort -rn | head -30
-"wmic process get Name,WorkingSetSize /format:csv"
+# Top memory consumers, grouped by process name (multi-process apps like browsers sum correctly)
+"powershell -Command \"Get-Process | Group-Object Name | ForEach-Object { [PSCustomObject]@{ Name = $_.Name; Count = $_.Count; MB = [math]::Round(($_.Group | Measure-Object WorkingSet64 -Sum).Sum / 1MB) } } | Sort-Object MB -Descending | Select-Object -First 25 | Format-Table -AutoSize\""
 
 # Startup programs
 "powershell -Command \"Get-CimInstance Win32_StartupCommand | Select-Object Name, Command | Format-Table -AutoSize -Wrap\""
@@ -109,8 +109,11 @@ Run all diagnostic groups **in parallel** — they're independent reads. Parse t
 # GPU engine utilization by process -- detects Discord Go Live encoder tax (videoencode at 20-30% sustained = streaming)
 "powershell -Command \"(Get-Counter '\GPU Engine(*)\Utilization Percentage' -SampleInterval 1 -MaxSamples 1).CounterSamples | Where-Object CookedValue -gt 5 | Sort-Object CookedValue -Descending | Select-Object -First 10 | ForEach-Object { $proc = if ($_.InstanceName -match 'pid_(\d+)') { (Get-Process -Id $matches[1] -ErrorAction SilentlyContinue).Name } else { '?' }; Write-Host ($_.InstanceName.Split('_')[-2..-1] -join '_') ' = ' [math]::Round($_.CookedValue,1) '% ' $proc }\""
 
-# Find Steam installation
-"where /R C:\ steam.exe 2>NUL & where /R D:\ steam.exe 2>NUL & where /R E:\ steam.exe 2>NUL & exit 0"
+# Find Steam installation — registry lookup is instant; NEVER recursively scan whole drives with `where /R`
+"powershell -Command \"(Get-ItemProperty 'HKCU:\Software\Valve\Steam' -ErrorAction SilentlyContinue).SteamPath\""
+
+# All Steam library locations (games may live outside the install dir)
+"powershell -Command \"Select-String -Path '<steam-path>\steamapps\libraryfolders.vdf' -Pattern 'path' | ForEach-Object Line\""
 ```
 
 After finding Steam, list installed games:
@@ -193,5 +196,5 @@ If Minecraft is relevant and a Spark profile URL is provided, defer to the `mine
 
 For JVM args, check running Java processes:
 ```bash
-"wmic process where \"name='javaw.exe'\" get CommandLine /format:list"
+"powershell -Command \"Get-CimInstance Win32_Process | Where-Object Name -eq 'javaw.exe' | Select-Object -ExpandProperty CommandLine\""
 ```

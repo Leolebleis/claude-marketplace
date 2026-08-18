@@ -10,7 +10,7 @@ Detection patterns, impact ratings, and fix commands for common Windows PC perfo
 
 ## WMI `MaxClockSpeed` Returns Rated Clock, NOT Boost
 
-`Win32_Processor.MaxClockSpeed` and `wmic cpu get MaxClockSpeed` return the SMBIOS rated/base speed, NOT actual boost frequency. Reading `CurrentClockSpeed = MaxClockSpeed = 3300 MHz` on an i7-11370H (whose real single-core boost is 4.8 GHz) does NOT mean boost is locked — it means WMI cannot tell you the live frequency. Same trap on most Intel and AMD laptop CPUs.
+`Win32_Processor.MaxClockSpeed` (via `Get-CimInstance` — `wmic` itself is removed on Win11 24H2+) returns the SMBIOS rated/base speed, NOT actual boost frequency. Reading `CurrentClockSpeed = MaxClockSpeed = 3300 MHz` on an i7-11370H (whose real single-core boost is 4.8 GHz) does NOT mean boost is locked — it means WMI cannot tell you the live frequency. Same trap on most Intel and AMD laptop CPUs.
 
 **Always verify CPU boost via PerfMon (locale-aware names):**
 - `\Processor Information(_Total)\% Processor Performance` — values >100 = boosting (e.g. 110 = 10% above base)
@@ -123,7 +123,7 @@ For low-end GPUs: `UpscalerQuality=Performance` or `Quality` to enable real upsc
 
 **Detection:** `powercfg /getactivescheme` returns a GUID that is NOT the "High Performance" or "Ultimate Performance" plan. The plan name varies by OS language (e.g., "Balanced", "Utilisation normale", "Ausgeglichen").
 
-**Impact:** CRITICAL — CPU stays at base clock even under heavy load. On laptops this can mean 40-60% less single-thread performance. Desktops are less affected but still lose boost headroom.
+**Impact:** MEDIUM on laptops, LOW on modern desktops — do NOT report this as critical. Balanced DOES boost under load on modern Windows; "CPU stays at base clock on Balanced" is folklore. The real differences: High/Ultimate Performance reduces clock ramp-up latency and disables core parking (matters for bursty/competitive workloads, minor for average FPS). The bigger levers are the Windows Power Mode slider (Settings > System > Power — overrides plan behavior, check `ActiveOverlayAcPowerScheme`) and OEM firmware modes (see Armoury Crate section).
 
 **Why it happens:** Windows defaults to Balanced. On laptops, users often confuse the OEM fan/performance profile (keyboard shortcut or vendor software) with the Windows power plan — they're independent settings.
 
@@ -146,7 +146,7 @@ For low-end GPUs: `UpscalerQuality=Performance` or `Quality` to enable real upsc
 
 ## Games on HDD Instead of SSD
 
-**Detection:** Cross-reference `wmic diskdrive` (identify which disk is SSD vs HDD by model — look for "SSD", "NVMe", or known SSD model names like Samsung MZ*, WD SN*, etc. Seagate ST* and WD WD10* are usually HDDs) with `wmic logicaldisk` (drive letters) and Steam game locations.
+**Detection:** Cross-reference `Get-PhysicalDisk` (its `MediaType` column says SSD/HDD directly — don't guess from model names, and don't use `Win32_DiskDrive.MediaType` which reports "Fixed hard disk media" for both) with `Get-CimInstance Win32_LogicalDisk` (drive letters) and Steam game locations.
 
 **Impact:** HIGH — HDD sequential reads ~100-150 MB/s vs NVMe SSD ~3500 MB/s. Affects map load times, texture streaming, and stutter during gameplay. Swap/page file on HDD makes RAM pressure even worse.
 
@@ -269,7 +269,7 @@ The `03` prefix means disabled. `02` means enabled.
 
 ## High Swap / Page File Usage
 
-**Detection:** Compare `FreePhysicalMemory` with `TotalVisibleMemorySize` from `wmic OS`. Check `Win32_PageFileUsage` for current and peak swap usage. Swap > 1 GB active during gaming = problem. Also check WHERE the page file lives — `Get-CimInstance Win32_PageFileUsage | Select-Object Name` — and how much free space that drive has.
+**Detection:** Compare `FreePhysicalMemory` with `TotalVisibleMemorySize` from `Get-CimInstance Win32_OperatingSystem`. Check `Win32_PageFileUsage` for current and peak swap usage. Swap > 1 GB active during gaming = problem. Also check WHERE the page file lives — `Get-CimInstance Win32_PageFileUsage | Select-Object Name` — and how much free space that drive has.
 
 **Impact:** Varies — Causes random hitches when pages swap to/from disk. Especially bad if page file is on a drive with low free space (can't grow) or on an HDD. A page file on a nearly-full drive can cause multi-second freezes when Windows can't allocate swap fast enough.
 
@@ -327,7 +327,7 @@ $cs | Set-CimInstance -Property @{AutomaticManagedPagefile = $true}
 
 ## Minecraft JVM Flags
 
-**Detection:** Check `wmic process where "name='javaw.exe'" get CommandLine`.
+**Detection:** Check `Get-CimInstance Win32_Process | Where-Object Name -eq 'javaw.exe' | Select-Object -ExpandProperty CommandLine`.
 
 **Known bad patterns:**
 | Pattern | Problem |
@@ -340,8 +340,9 @@ $cs | Set-CimInstance -Property @{AutomaticManagedPagefile = $true}
 
 **Recommended client GC (Shenandoah):**
 ```
--XX:+UseShenandoahGC -XX:ShenandoahGCMode=iu -XX:ShenandoahGuaranteedGCInterval=1000000 -XX:AllocatePrefetchStyle=1
+-XX:+UseShenandoahGC -XX:ShenandoahGuaranteedGCInterval=1000000 -XX:AllocatePrefetchStyle=1
 ```
+Note: `ShenandoahGCMode=iu` was experimental (required `-XX:+UnlockExperimentalVMOptions`) and has been removed from recent JDKs — adding it on Java 21+ fails JVM startup. Plain Shenandoah is the safe form.
 
 **Recommended client GC (G1GC, Java 21):**
 ```
@@ -522,7 +523,7 @@ Stops NEW install jobs from queuing. Does NOT abort current TiWorker (it's spawn
 ```powershell
 (Get-ItemProperty 'HKLM:\SYSTEM\CurrentControlSet\Control\GraphicsDrivers' -Name HwSchMode -ErrorAction SilentlyContinue).HwSchMode
 ```
-Value 2 = on, 1 = off, missing = default off.
+Value 2 = on, 1 = off, missing = OS default (Win11 with modern NVIDIA drivers typically defaults ON for supported GPUs — verify in Settings > System > Display > Graphics > Default graphics settings rather than assuming off).
 
 **Impact / 2026 consensus:** Should be ON for RTX 30-series and newer, especially when DLSS Frame Generation is in use (FG explicitly requires HAGS for best results on RTX 40+/50). Net-zero or small positive impact in most non-FG titles. Reserves a small chunk of VRAM (~500 MB).
 
@@ -544,11 +545,9 @@ Reboot.
 
 ## NVIDIA App "Game Filters and Photo Mode" Tax
 
-**Detection:** NVIDIA App is installed (replaces GeForce Experience). The "Game Filters and Photo Mode" feature is enabled by default.
+**Status: HISTORICAL — fixed by NVIDIA.** The up-to-15% FPS loss from the filter injection layer (Tom's Hardware tested, NVIDIA acknowledged, late 2024) was fixed in NVIDIA App updates shortly after (11.0.1.x, Dec 2024). Do NOT report this as a current perf issue on an up-to-date NVIDIA App.
 
-**Impact:** Tom's Hardware tested + NVIDIA officially acknowledged: up to 15% FPS loss in games due to filter injection layer loaded into every render pipeline, even when filters aren't being used. NVIDIA App also uses 200-300 MB at idle vs GeForce Experience's 80-150 MB.
-
-**Fix (user's hands):** NVIDIA App → Settings → uncheck "Enable Game Filters and Photo Mode". Or uninstall NVIDIA App entirely and use bare driver via [nvcleanstall](https://www.techpowerup.com/nvcleanstall/) — saves ~250 MB and removes the filter layer completely.
+**Still relevant:** only if the installed NVIDIA App is a late-2024 build (check its Settings > About). Disabling "Game Filters and Photo Mode" on current versions is optional hygiene, not a perf fix. NVIDIA App idle footprint (~200-300 MB) remains; [nvcleanstall](https://www.techpowerup.com/nvcleanstall/) for bare-driver installs is still valid for minimal setups.
 
 **Verify:** `tasklist | findstr /I "NVIDIA App Container"` — should be fewer/no processes after disabling.
 
