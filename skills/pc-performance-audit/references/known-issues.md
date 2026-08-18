@@ -37,6 +37,43 @@ On non-English Windows, PerfMon counter sets and counter names are translated. E
 
 A single failing counter in a parallel batch (exit 1) cancels the whole batch. Run counter queries one at a time or wrap in `try/catch`.
 
+## SSH Runs in Session 0 — Every Display API Returns Nothing
+
+Over SSH (and in any service context) you are in **session 0**, not the user's desktop session. Anything routed through GDI or the per-session display database silently returns empty — not an error, just zero results, which reads like "no monitors" or "HDR unsupported":
+
+| Blocked in session 0 | Symptom |
+|---|---|
+| `[System.Windows.Forms.Screen]::AllScreens` | one fake 1024x768 "WinDisc" entry |
+| `Get-Counter '\GPU Engine(*)...'` | empty result set |
+| `QueryDisplayConfig` / `GetDisplayConfigBufferSizes` (CCD) | 0 paths, rc=0 — so no HDR state, no SDR white level |
+| `NvAPI_EnumNvidiaDisplayHandle`, `NvAPI_DISP_GetDisplayIdByDisplayName` | no handles |
+| DDC/CI via `GetPhysicalMonitorsFromHMONITOR` | no monitors |
+| `dxdiag` display fields | unreliable |
+
+**Session-independent alternatives that DO work** (all validated over SSH):
+
+| Need | Use instead |
+|---|---|
+| Monitor model / EDID / VRR range | `HKLM\SYSTEM\CurrentControlSet\Enum\DISPLAY\*\*\Device Parameters\EDID`, or `Get-CimInstance -Namespace root\wmi WmiMonitorID` |
+| Current resolution/refresh of primary | `Get-CimInstance Win32_VideoController` (driver-level, not session) |
+| Per-display VRR / G-Sync state | NVAPI **GPU-side**: `NvAPI_EnumPhysicalGPUs` -> `NvAPI_GPU_GetConnectedDisplayIds` (0x0078DBA2) -> `NvAPI_DISP_GetAdaptiveSyncData` (0xB73D1EE9) |
+| Current HDR mode / colour format / bpc | `NvAPI_Disp_HdrColorControl` (0x351DA224), cmd=GET |
+| HAGS state | `D3DKMTEnumAdapters2` + `D3DKMTQueryAdapterInfo` type 70 (WDDM 2.7 caps) |
+| Anything genuinely session-bound | run it as a scheduled task in the user's session: `schtasks /create ... /ru <user> /it` then `schtasks /run`; write output to a file (stdout is not returned) |
+
+NVAPI notes: a wrong function ID makes `nvapi_QueryInterface` return NULL and `GetDelegateForFunctionPointer` throws *before any of your code runs* — check IDs first. Struct `version` fields are `sizeof | (version << 16)` and must be set on **every** array element. Marshal structs manually in C#; PowerShell mangles struct arrays. PowerShell also parses `0x80061082` as a negative Int32 — pass display IDs as decimal.
+
+## `HwSchMode` Absent Does NOT Mean HAGS Is Off
+
+The registry value `HKLM\SYSTEM\CurrentControlSet\Control\GraphicsDrivers\HwSchMode` is frequently **missing entirely** on Win11 machines where HAGS is active — it only exists once something explicitly writes it. Reading "absent" and reporting "HAGS is off" is a false negative (confirmed on a Win11 25H2 + RTX 5080 box: key absent, HAGS enabled).
+
+Authoritative check (works over SSH):
+```
+D3DKMTEnumAdapters2  ->  D3DKMTQueryAdapterInfo(hAdapter, type=70 /* KMTQAITYPE_WDDM_2_7_CAPS */)
+bit0 = HwSchSupported, bit1 = HwSchEnabled, bit2 = HwSchEnabledByDefault
+```
+Ignore non-render adapters (Basic Render Driver reports `HwSchSupported=False`).
+
 ## Built-in Windows 11 `sudo` Doesn't Work Over SSH
 
 `sudo <cmd>` over an OpenSSH session returns "You are not authorized to run sudo" / "Vous n'êtes pas autorisé à exécuter sudo" even for local administrators. Reason: UAC elevation requires an interactive desktop to display the consent prompt; SSH is non-interactive.
@@ -565,3 +602,51 @@ https://international.download.nvidia.com/Windows/581.94hf/581.94-desktop-notebo
 ```
 
 Most current Game Ready drivers (2026+) include the fix.
+
+---
+
+## Unvalidated VRR Monitor — G-Sync Silently Off
+
+**Detection:** monitor is adaptive-sync capable (EDID continuous-frequency bit set, plus a Display Range Limits descriptor giving a VRR window such as 48-144) but is **not** on NVIDIA's validated "G-SYNC Compatible" list. For those panels the driver requires a **per-display** enable that the global "Enable G-SYNC" setting does not provide, so VRR can be silently inactive while every global setting looks correct.
+
+**Impact:** HIGH — no VRR at all: tearing, or V-Sync latency, plus judder below the refresh cap. Easy to miss because NVCP's global page looks right and `.nip` exports show G-Sync enabled.
+
+**Check (over SSH, GPU-side NVAPI):**
+```
+NvAPI_EnumPhysicalGPUs -> NvAPI_GPU_GetConnectedDisplayIds -> NvAPI_DISP_GetAdaptiveSyncData
+flags bit0 = bDisableAdaptiveSync (1 = adaptive sync DISABLED for that display)
+maxFrameInterval in us gives the VRR floor (20583 us = 48 Hz); 0 = panel has no VRR range
+```
+Verified twice: one machine had a 4K120 panel with `bDisableAdaptiveSync=1` (VRR dead) while a second monitor on the same GPU was fine; another machine's 4K144 panel was correctly enabled with a 48 Hz floor.
+
+**Fix (needs the user's hands):** NVCP -> Display -> Set up G-SYNC -> "Enable settings for the selected display model" with that monitor selected. `NvAPI_DISP_SetAdaptiveSyncData` (0x3EEBBA1D, flags=0) flips it live, but persistence across reboot is unconfirmed — re-check after reboot.
+
+**Verify:** enable the G-SYNC Indicator overlay (NVCP -> Display menu) and launch a game.
+
+**Caveat:** some non-certified panels flicker in menus/loading screens with VRR on. If so, that display genuinely should stay off.
+
+---
+
+## HDR Looks "Washed Out / Grey / Dull"
+
+**The most common HDR complaint, and usually three separate causes stacked.**
+
+**Detection — establish the panel's real tier first:**
+- Decode the EDID CTA-861 HDR Static Metadata block (extension block at byte 128, extended tag 6):
+  - EOTF byte: bit2 = PQ/HDR10 supported, bit3 = HLG
+  - Max luminance = `50 * 2^(code/32)` · Min luminance = `max * (code/255)^2 / 100`
+- Check certification: **FreeSync Premium is not an HDR tier** (Premium *Pro* is). No DisplayHDR certification + no local dimming (FALD) = "HDR10 compatible", not an HDR performer.
+- Current state: `NvAPI_Disp_HdrColorControl` (GET) returns HDR mode, colour format, dynamic range, bpc.
+
+**Rule of thumb:** under ~600 nits peak with no local dimming, HDR will look *flatter* than SDR no matter how it is configured. Say so plainly rather than tuning forever.
+
+**Causes, in order of contribution:**
+1. **Paper white / SDR content brightness too high** — with Windows HDR on, all SDR content (desktop, browser, chat, SDR games) is tone-mapped through the *SDR content brightness* slider. Default is often wrong and produces exactly the grey, faded desktop. In-game the equivalent slider is "paper white"/"UI brightness": **100-200 nits** is the normal range.
+2. **In-game peak luminance set above the panel** — a game defaulting to 1000 nits on a 500-nit display compresses the whole tone curve. Set peak to the panel's measured peak.
+3. **Never calibrated** — the free **Windows HDR Calibration** app (Microsoft Store) measures perceptually and writes a profile many games read. EDID values are manufacturer-declared and optimistic.
+4. **Auto HDR off** (`HKCU\Software\Microsoft\DirectX\UserGpuPreferences` -> `DirectXUserGlobalSettings`, `AutoHDREnable=0`) — SDR games stay SDR while the desktop shifts to HDR, so everything looks flatter and no game gains anything.
+5. **Stale/custom ICC profile** applied while HDR is active (`HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion\ICM\ProfileAssociations\Display`).
+
+**Best structural fix:** don't leave the desktop in HDR at all. Tools such as **PyAutoActions** enable HDR only while a configured game runs and revert to SDR on exit, which removes cause 1 for everything outside games. They run in the user's session (also convenient when the audit is remote).
+
+**Per-game note:** titles with their own HDR calibration screens (Battlefield, RDR2, Elden Ring, most modern AAA) do **not** inherit the Windows calibration — each needs setting once.

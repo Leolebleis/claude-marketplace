@@ -15,7 +15,9 @@ Determine whether this is a local or remote audit:
 - **Remote:** The user provides an SSH connection string (e.g., `ssh -i key user@host`). Prefix every command with it.
 - **Local:** The target is the current machine. Run commands directly. Note: `powercfg` and some Windows commands may need to be wrapped in `powershell -Command "..."` when running from a bash shell. Some commands need admin — use `gsudo` if available, otherwise note that admin is required.
 
-For remote audits, `$` variables in PowerShell commands will be eaten by bash — write `.ps1` script files and execute them via `powershell -ExecutionPolicy Bypass -File script.ps1` instead.
+For remote audits, `$` variables in PowerShell commands will be eaten by bash — write `.ps1` script files and execute them via `powershell -ExecutionPolicy Bypass -File script.ps1` instead. PowerShell here-strings (`@'...'@`) also break when piped to `powershell -Command -` over SSH: `scp` the script and use `-File`.
+
+**Remote audits run in session 0** — every display-related API returns empty (no monitors, no HDR state, no GPU counters). This is silent, not an error. Read the "SSH Runs in Session 0" trap in `references/known-issues.md` before concluding a machine has no displays or no HDR support; it lists the session-independent alternatives used in Group F below.
 
 ## Step 1: Gather Data
 
@@ -71,6 +73,8 @@ Run all diagnostic groups **in parallel** — they're independent reads. Parse t
 # On French Windows: Get-Counter -ListSet 'Informations sur le processeur' to find localized names.
 
 # Hardware-Accelerated GPU Scheduling (HAGS) state -- relevant for RTX 30+/40+/50 with Frame Gen
+# WARNING: an ABSENT HwSchMode value does NOT mean HAGS is off -- it is commonly missing while HAGS is active.
+# Use this only as a hint; confirm with the D3DKMT check in Group F. See known-issues.md.
 "reg query \"HKLM\SYSTEM\CurrentControlSet\Control\GraphicsDrivers\" /v HwSchMode 2>NUL & exit 0"
 
 # HVCI / Memory Integrity state -- significant gaming perf tax on weaker CPUs
@@ -133,6 +137,36 @@ After finding Steam, list installed games:
 # ASUS services (for cleanup pass -- see HVCI/Armoury sections in known-issues.md for KEEP/DISABLE triage)
 "powershell -Command \"Get-Service | Where-Object { $_.Name -match 'asus|armoury|rog' -or $_.DisplayName -match 'ASUS|Armoury|ROG' } | Select-Object Name, DisplayName, Status, StartType | Format-Table -AutoSize\""
 ```
+
+### Group F: Display / VRR / HDR (run when the complaint involves visuals, tearing, stutter, or HDR)
+
+These are the checks that survive session 0. Full code patterns and struct/version details are in `references/known-issues.md`.
+
+```powershell
+# Monitor inventory + native mode (driver-level, works remotely)
+Get-CimInstance -Namespace root\wmi -ClassName WmiMonitorID
+Get-CimInstance Win32_VideoController | Select-Object Name, DriverVersion, CurrentHorizontalResolution, CurrentVerticalResolution, CurrentRefreshRate
+
+# EDID: VRR range + HDR capability. Parse from
+#   HKLM\SYSTEM\CurrentControlSet\Enum\DISPLAY\<mfg>\<instance>\Device Parameters\EDID
+#   - byte 0x18 bit0        = continuous frequency (adaptive-sync capable)
+#   - descriptor tag 0xFD   = Display Range Limits -> VRR window (e.g. 48-144 Hz)
+#   - CTA ext (byte 128), extended tag 6 = HDR Static Metadata
+#       EOTF bit2 = PQ/HDR10 ; MaxLum = 50*2^(code/32) ; MinLum = Max*(code/255)^2/100
+```
+
+Then, via NVAPI (`nvapi64.dll`, `nvapi_QueryInterface`) — GPU-side, no desktop session needed:
+
+| Question | Call chain |
+|---|---|
+| Is VRR/G-Sync actually on, per display? | `EnumPhysicalGPUs` -> `GPU_GetConnectedDisplayIds` (0x0078DBA2) -> `DISP_GetAdaptiveSyncData` (0xB73D1EE9); flags bit0 = **disabled** |
+| Is HDR on now, and at what format/bpc? | `Disp_HdrColorControl` (0x351DA224), cmd=GET |
+| Is HAGS really enabled? | `D3DKMTEnumAdapters2` + `D3DKMTQueryAdapterInfo` type 70 |
+
+**Interpretation:**
+- Adaptive sync **disabled** on a VRR-capable panel = the unvalidated-monitor trap. High impact, easy to miss. See the "Unvalidated VRR Monitor" pattern.
+- HDR complaints: establish the panel's tier from EDID luminance codes **before** tuning anything. Under ~600 nits with no local dimming, HDR will look flat regardless of settings — say so. See the "HDR Looks Washed Out" pattern.
+- Frame-cap target for the G-Sync stack = the gaming monitor's real max refresh − 3 (confirm from `CurrentRefreshRate`, not assumption).
 
 ## Step 2: Analyze
 
