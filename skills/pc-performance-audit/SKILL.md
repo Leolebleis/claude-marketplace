@@ -15,7 +15,9 @@ Determine whether this is a local or remote audit:
 - **Remote:** The user provides an SSH connection string (e.g., `ssh -i key user@host`). Prefix every command with it.
 - **Local:** The target is the current machine. Run commands directly. Note: `powercfg` and some Windows commands may need to be wrapped in `powershell -Command "..."` when running from a bash shell. Some commands need admin — use `gsudo` if available, otherwise note that admin is required.
 
-For remote audits, `$` variables in PowerShell commands will be eaten by bash — write `.ps1` script files and execute them via `powershell -ExecutionPolicy Bypass -File script.ps1` instead.
+For remote audits, `$` variables in PowerShell commands will be eaten by bash — write `.ps1` script files and execute them via `powershell -ExecutionPolicy Bypass -File script.ps1` instead. PowerShell here-strings (`@'...'@`) also break when piped to `powershell -Command -` over SSH: `scp` the script and use `-File`.
+
+**Remote audits run in session 0** — every display-related API returns empty (no monitors, no HDR state, no GPU counters). This is silent, not an error. Read the "SSH Runs in Session 0" trap in `references/known-issues.md` before concluding a machine has no displays or no HDR support; it lists the session-independent alternatives used in Group F below.
 
 ## Step 1: Gather Data
 
@@ -23,13 +25,15 @@ For remote audits, `$` variables in PowerShell commands will be eaten by bash �
 
 Run all diagnostic groups **in parallel** — they're independent reads. Parse the results and note everything for the report.
 
+**`wmic` is REMOVED on Windows 11 24H2+** — it fails with "not recognized" on any current build. Always use the `Get-CimInstance` forms below; `wmic` is at most a fallback on old Win10 targets.
+
 **Parallel batch hazards:** A single command in a parallel SSH batch returning exit 1 (e.g., `findstr` with no matches, `where` with no result) cancels the WHOLE batch. Wrap with `& exit 0` or use PowerShell `Where-Object`.
 
 ### Group A: Hardware
 
 ```bash
 # CPU
-"wmic cpu get Name,NumberOfCores,NumberOfLogicalProcessors,CurrentClockSpeed /format:list"
+"powershell -Command \"Get-CimInstance Win32_Processor | Select-Object Name, NumberOfCores, NumberOfLogicalProcessors | Format-List\""
 
 # RAM sticks (slot count, capacity, speed, dual/single channel)
 "powershell -Command \"Get-CimInstance Win32_PhysicalMemory | Select-Object DeviceLocator, Capacity, Speed, ConfiguredClockSpeed, Manufacturer | Format-Table -AutoSize\""
@@ -37,19 +41,18 @@ Run all diagnostic groups **in parallel** — they're independent reads. Parse t
 # GPU
 "powershell -Command \"Get-CimInstance Win32_VideoController | Select-Object Name, DriverVersion, DriverDate, AdapterRAM | Format-List\""
 
-# Disks (SSD vs HDD, model, size)
-"wmic diskdrive get Model,MediaType,Size,InterfaceType /format:list"
+# Disks (SSD vs HDD — Get-PhysicalDisk.MediaType is authoritative; Win32_DiskDrive.MediaType says 'Fixed hard disk media' for both)
+"powershell -Command \"Get-PhysicalDisk | Select-Object FriendlyName, MediaType, BusType, Size | Format-Table -AutoSize\""
 
 # Drive letters, free space
-"wmic logicaldisk get DeviceID,FreeSpace,Size,VolumeName,DriveType /format:csv"
+"powershell -Command \"Get-CimInstance Win32_LogicalDisk | Select-Object DeviceID, VolumeName, DriveType, FreeSpace, Size | Format-Table -AutoSize\""
 ```
 
 ### Group B: System State
 
 ```bash
 # RAM + swap usage
-"wmic OS get FreePhysicalMemory,TotalVisibleMemorySize /format:list"
-"wmic OS get FreeVirtualMemory,TotalVirtualMemorySize /format:list"
+"powershell -Command \"Get-CimInstance Win32_OperatingSystem | Select-Object FreePhysicalMemory, TotalVisibleMemorySize, FreeVirtualMemory, TotalVirtualMemorySize | Format-List\""
 
 # Active power plan
 "powercfg /getactivescheme"
@@ -62,7 +65,7 @@ Run all diagnostic groups **in parallel** — they're independent reads. Parse t
 "powershell -Command \"Get-ItemProperty 'HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager\Memory Management' | Select-Object PagingFiles | Format-List\""
 
 # CPU clock + load snapshot
-# WARNING: wmic cpu's CurrentClockSpeed/MaxClockSpeed returns the SMBIOS RATED clock, not the live boost clock.
+# WARNING: WMI's Win32_Processor CurrentClockSpeed/MaxClockSpeed returns the SMBIOS RATED clock, not the live boost clock.
 # Reading CurrentClockSpeed = MaxClockSpeed does NOT mean the CPU isn't boosting -- WMI just can't tell you.
 # Use PerfMon for real boost state (locale-aware names; see Diagnostic Traps in known-issues.md):
 "powershell -Command \"Get-Counter '\Processor Information(_Total)\% Processor Performance', '\Processor Information(_Total)\Processor Frequency', '\Processor Information(_Total)\Performance Limit Flags' -SampleInterval 1 -MaxSamples 2 -ErrorAction SilentlyContinue | ForEach-Object { $_.CounterSamples | ForEach-Object { Write-Host ($_.Path.Split('\\')[-1] + ' = ' + [math]::Round($_.CookedValue,1)) } }\""
@@ -70,6 +73,8 @@ Run all diagnostic groups **in parallel** — they're independent reads. Parse t
 # On French Windows: Get-Counter -ListSet 'Informations sur le processeur' to find localized names.
 
 # Hardware-Accelerated GPU Scheduling (HAGS) state -- relevant for RTX 30+/40+/50 with Frame Gen
+# WARNING: an ABSENT HwSchMode value does NOT mean HAGS is off -- it is commonly missing while HAGS is active.
+# Use this only as a hint; confirm with the D3DKMT check in Group F. See known-issues.md.
 "reg query \"HKLM\SYSTEM\CurrentControlSet\Control\GraphicsDrivers\" /v HwSchMode 2>NUL & exit 0"
 
 # HVCI / Memory Integrity state -- significant gaming perf tax on weaker CPUs
@@ -79,9 +84,8 @@ Run all diagnostic groups **in parallel** — they're independent reads. Parse t
 ### Group C: Processes & Services
 
 ```bash
-# Top processes by memory — pipe through awk locally:
-# tr -d '\r' | awk -F',' 'NR>1 && $3!="" {name=$2; mb=$3/1048576; if(mb>30) printf "%8.0f MB  %s\n", mb, name}' | sort -rn | head -30
-"wmic process get Name,WorkingSetSize /format:csv"
+# Top memory consumers, grouped by process name (multi-process apps like browsers sum correctly)
+"powershell -Command \"Get-Process | Group-Object Name | ForEach-Object { [PSCustomObject]@{ Name = $_.Name; Count = $_.Count; MB = [math]::Round(($_.Group | Measure-Object WorkingSet64 -Sum).Sum / 1MB) } } | Sort-Object MB -Descending | Select-Object -First 25 | Format-Table -AutoSize\""
 
 # Startup programs
 "powershell -Command \"Get-CimInstance Win32_StartupCommand | Select-Object Name, Command | Format-Table -AutoSize -Wrap\""
@@ -109,8 +113,11 @@ Run all diagnostic groups **in parallel** — they're independent reads. Parse t
 # GPU engine utilization by process -- detects Discord Go Live encoder tax (videoencode at 20-30% sustained = streaming)
 "powershell -Command \"(Get-Counter '\GPU Engine(*)\Utilization Percentage' -SampleInterval 1 -MaxSamples 1).CounterSamples | Where-Object CookedValue -gt 5 | Sort-Object CookedValue -Descending | Select-Object -First 10 | ForEach-Object { $proc = if ($_.InstanceName -match 'pid_(\d+)') { (Get-Process -Id $matches[1] -ErrorAction SilentlyContinue).Name } else { '?' }; Write-Host ($_.InstanceName.Split('_')[-2..-1] -join '_') ' = ' [math]::Round($_.CookedValue,1) '% ' $proc }\""
 
-# Find Steam installation
-"where /R C:\ steam.exe 2>NUL & where /R D:\ steam.exe 2>NUL & where /R E:\ steam.exe 2>NUL & exit 0"
+# Find Steam installation — registry lookup is instant; NEVER recursively scan whole drives with `where /R`
+"powershell -Command \"(Get-ItemProperty 'HKCU:\Software\Valve\Steam' -ErrorAction SilentlyContinue).SteamPath\""
+
+# All Steam library locations (games may live outside the install dir)
+"powershell -Command \"Select-String -Path '<steam-path>\steamapps\libraryfolders.vdf' -Pattern 'path' | ForEach-Object Line\""
 ```
 
 After finding Steam, list installed games:
@@ -130,6 +137,36 @@ After finding Steam, list installed games:
 # ASUS services (for cleanup pass -- see HVCI/Armoury sections in known-issues.md for KEEP/DISABLE triage)
 "powershell -Command \"Get-Service | Where-Object { $_.Name -match 'asus|armoury|rog' -or $_.DisplayName -match 'ASUS|Armoury|ROG' } | Select-Object Name, DisplayName, Status, StartType | Format-Table -AutoSize\""
 ```
+
+### Group F: Display / VRR / HDR (run when the complaint involves visuals, tearing, stutter, or HDR)
+
+These are the checks that survive session 0. Full code patterns and struct/version details are in `references/known-issues.md`.
+
+```powershell
+# Monitor inventory + native mode (driver-level, works remotely)
+Get-CimInstance -Namespace root\wmi -ClassName WmiMonitorID
+Get-CimInstance Win32_VideoController | Select-Object Name, DriverVersion, CurrentHorizontalResolution, CurrentVerticalResolution, CurrentRefreshRate
+
+# EDID: VRR range + HDR capability. Parse from
+#   HKLM\SYSTEM\CurrentControlSet\Enum\DISPLAY\<mfg>\<instance>\Device Parameters\EDID
+#   - byte 0x18 bit0        = continuous frequency (adaptive-sync capable)
+#   - descriptor tag 0xFD   = Display Range Limits -> VRR window (e.g. 48-144 Hz)
+#   - CTA ext (byte 128), extended tag 6 = HDR Static Metadata
+#       EOTF bit2 = PQ/HDR10 ; MaxLum = 50*2^(code/32) ; MinLum = Max*(code/255)^2/100
+```
+
+Then, via NVAPI (`nvapi64.dll`, `nvapi_QueryInterface`) — GPU-side, no desktop session needed:
+
+| Question | Call chain |
+|---|---|
+| Is VRR/G-Sync actually on, per display? | `EnumPhysicalGPUs` -> `GPU_GetConnectedDisplayIds` (0x0078DBA2) -> `DISP_GetAdaptiveSyncData` (0xB73D1EE9); flags bit0 = **disabled** |
+| Is HDR on now, and at what format/bpc? | `Disp_HdrColorControl` (0x351DA224), cmd=GET |
+| Is HAGS really enabled? | `D3DKMTEnumAdapters2` + `D3DKMTQueryAdapterInfo` type 70 |
+
+**Interpretation:**
+- Adaptive sync **disabled** on a VRR-capable panel = the unvalidated-monitor trap. High impact, easy to miss. See the "Unvalidated VRR Monitor" pattern.
+- HDR complaints: establish the panel's tier from EDID luminance codes **before** tuning anything. Under ~600 nits with no local dimming, HDR will look flat regardless of settings — say so. See the "HDR Looks Washed Out" pattern.
+- Frame-cap target for the G-Sync stack = the gaming monitor's real max refresh − 3 (confirm from `CurrentRefreshRate`, not assumption).
 
 ## Step 2: Analyze
 
@@ -193,5 +230,5 @@ If Minecraft is relevant and a Spark profile URL is provided, defer to the `mine
 
 For JVM args, check running Java processes:
 ```bash
-"wmic process where \"name='javaw.exe'\" get CommandLine /format:list"
+"powershell -Command \"Get-CimInstance Win32_Process | Where-Object Name -eq 'javaw.exe' | Select-Object -ExpandProperty CommandLine\""
 ```

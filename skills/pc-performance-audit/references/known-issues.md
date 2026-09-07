@@ -10,7 +10,7 @@ Detection patterns, impact ratings, and fix commands for common Windows PC perfo
 
 ## WMI `MaxClockSpeed` Returns Rated Clock, NOT Boost
 
-`Win32_Processor.MaxClockSpeed` and `wmic cpu get MaxClockSpeed` return the SMBIOS rated/base speed, NOT actual boost frequency. Reading `CurrentClockSpeed = MaxClockSpeed = 3300 MHz` on an i7-11370H (whose real single-core boost is 4.8 GHz) does NOT mean boost is locked — it means WMI cannot tell you the live frequency. Same trap on most Intel and AMD laptop CPUs.
+`Win32_Processor.MaxClockSpeed` (via `Get-CimInstance` — `wmic` itself is removed on Win11 24H2+) returns the SMBIOS rated/base speed, NOT actual boost frequency. Reading `CurrentClockSpeed = MaxClockSpeed = 3300 MHz` on an i7-11370H (whose real single-core boost is 4.8 GHz) does NOT mean boost is locked — it means WMI cannot tell you the live frequency. Same trap on most Intel and AMD laptop CPUs.
 
 **Always verify CPU boost via PerfMon (locale-aware names):**
 - `\Processor Information(_Total)\% Processor Performance` — values >100 = boosting (e.g. 110 = 10% above base)
@@ -36,6 +36,43 @@ On non-English Windows, PerfMon counter sets and counter names are translated. E
 **Discovery pattern:** `(Get-Counter -ListSet *).CounterSetName` returns localized names. Filter by `-match` against translation candidates (e.g. `'rocesseur|rocessor'`), then enumerate `.Counter` to find the localized counter you need. Build queries dynamically rather than hardcoding English names.
 
 A single failing counter in a parallel batch (exit 1) cancels the whole batch. Run counter queries one at a time or wrap in `try/catch`.
+
+## SSH Runs in Session 0 — Every Display API Returns Nothing
+
+Over SSH (and in any service context) you are in **session 0**, not the user's desktop session. Anything routed through GDI or the per-session display database silently returns empty — not an error, just zero results, which reads like "no monitors" or "HDR unsupported":
+
+| Blocked in session 0 | Symptom |
+|---|---|
+| `[System.Windows.Forms.Screen]::AllScreens` | one fake 1024x768 "WinDisc" entry |
+| `Get-Counter '\GPU Engine(*)...'` | empty result set |
+| `QueryDisplayConfig` / `GetDisplayConfigBufferSizes` (CCD) | 0 paths, rc=0 — so no HDR state, no SDR white level |
+| `NvAPI_EnumNvidiaDisplayHandle`, `NvAPI_DISP_GetDisplayIdByDisplayName` | no handles |
+| DDC/CI via `GetPhysicalMonitorsFromHMONITOR` | no monitors |
+| `dxdiag` display fields | unreliable |
+
+**Session-independent alternatives that DO work** (all validated over SSH):
+
+| Need | Use instead |
+|---|---|
+| Monitor model / EDID / VRR range | `HKLM\SYSTEM\CurrentControlSet\Enum\DISPLAY\*\*\Device Parameters\EDID`, or `Get-CimInstance -Namespace root\wmi WmiMonitorID` |
+| Current resolution/refresh of primary | `Get-CimInstance Win32_VideoController` (driver-level, not session) |
+| Per-display VRR / G-Sync state | NVAPI **GPU-side**: `NvAPI_EnumPhysicalGPUs` -> `NvAPI_GPU_GetConnectedDisplayIds` (0x0078DBA2) -> `NvAPI_DISP_GetAdaptiveSyncData` (0xB73D1EE9) |
+| Current HDR mode / colour format / bpc | `NvAPI_Disp_HdrColorControl` (0x351DA224), cmd=GET |
+| HAGS state | `D3DKMTEnumAdapters2` + `D3DKMTQueryAdapterInfo` type 70 (WDDM 2.7 caps) |
+| Anything genuinely session-bound | run it as a scheduled task in the user's session: `schtasks /create ... /ru <user> /it` then `schtasks /run`; write output to a file (stdout is not returned) |
+
+NVAPI notes: a wrong function ID makes `nvapi_QueryInterface` return NULL and `GetDelegateForFunctionPointer` throws *before any of your code runs* — check IDs first. Struct `version` fields are `sizeof | (version << 16)` and must be set on **every** array element. Marshal structs manually in C#; PowerShell mangles struct arrays. PowerShell also parses `0x80061082` as a negative Int32 — pass display IDs as decimal.
+
+## `HwSchMode` Absent Does NOT Mean HAGS Is Off
+
+The registry value `HKLM\SYSTEM\CurrentControlSet\Control\GraphicsDrivers\HwSchMode` is frequently **missing entirely** on Win11 machines where HAGS is active — it only exists once something explicitly writes it. Reading "absent" and reporting "HAGS is off" is a false negative (confirmed on a Win11 25H2 + RTX 5080 box: key absent, HAGS enabled).
+
+Authoritative check (works over SSH):
+```
+D3DKMTEnumAdapters2  ->  D3DKMTQueryAdapterInfo(hAdapter, type=70 /* KMTQAITYPE_WDDM_2_7_CAPS */)
+bit0 = HwSchSupported, bit1 = HwSchEnabled, bit2 = HwSchEnabledByDefault
+```
+Ignore non-render adapters (Basic Render Driver reports `HwSchSupported=False`).
 
 ## Built-in Windows 11 `sudo` Doesn't Work Over SSH
 
@@ -123,7 +160,7 @@ For low-end GPUs: `UpscalerQuality=Performance` or `Quality` to enable real upsc
 
 **Detection:** `powercfg /getactivescheme` returns a GUID that is NOT the "High Performance" or "Ultimate Performance" plan. The plan name varies by OS language (e.g., "Balanced", "Utilisation normale", "Ausgeglichen").
 
-**Impact:** CRITICAL — CPU stays at base clock even under heavy load. On laptops this can mean 40-60% less single-thread performance. Desktops are less affected but still lose boost headroom.
+**Impact:** MEDIUM on laptops, LOW on modern desktops — do NOT report this as critical. Balanced DOES boost under load on modern Windows; "CPU stays at base clock on Balanced" is folklore. The real differences: High/Ultimate Performance reduces clock ramp-up latency and disables core parking (matters for bursty/competitive workloads, minor for average FPS). The bigger levers are the Windows Power Mode slider (Settings > System > Power — overrides plan behavior, check `ActiveOverlayAcPowerScheme`) and OEM firmware modes (see Armoury Crate section).
 
 **Why it happens:** Windows defaults to Balanced. On laptops, users often confuse the OEM fan/performance profile (keyboard shortcut or vendor software) with the Windows power plan — they're independent settings.
 
@@ -146,7 +183,7 @@ For low-end GPUs: `UpscalerQuality=Performance` or `Quality` to enable real upsc
 
 ## Games on HDD Instead of SSD
 
-**Detection:** Cross-reference `wmic diskdrive` (identify which disk is SSD vs HDD by model — look for "SSD", "NVMe", or known SSD model names like Samsung MZ*, WD SN*, etc. Seagate ST* and WD WD10* are usually HDDs) with `wmic logicaldisk` (drive letters) and Steam game locations.
+**Detection:** Cross-reference `Get-PhysicalDisk` (its `MediaType` column says SSD/HDD directly — don't guess from model names, and don't use `Win32_DiskDrive.MediaType` which reports "Fixed hard disk media" for both) with `Get-CimInstance Win32_LogicalDisk` (drive letters) and Steam game locations.
 
 **Impact:** HIGH — HDD sequential reads ~100-150 MB/s vs NVMe SSD ~3500 MB/s. Affects map load times, texture streaming, and stutter during gameplay. Swap/page file on HDD makes RAM pressure even worse.
 
@@ -269,7 +306,7 @@ The `03` prefix means disabled. `02` means enabled.
 
 ## High Swap / Page File Usage
 
-**Detection:** Compare `FreePhysicalMemory` with `TotalVisibleMemorySize` from `wmic OS`. Check `Win32_PageFileUsage` for current and peak swap usage. Swap > 1 GB active during gaming = problem. Also check WHERE the page file lives — `Get-CimInstance Win32_PageFileUsage | Select-Object Name` — and how much free space that drive has.
+**Detection:** Compare `FreePhysicalMemory` with `TotalVisibleMemorySize` from `Get-CimInstance Win32_OperatingSystem`. Check `Win32_PageFileUsage` for current and peak swap usage. Swap > 1 GB active during gaming = problem. Also check WHERE the page file lives — `Get-CimInstance Win32_PageFileUsage | Select-Object Name` — and how much free space that drive has.
 
 **Impact:** Varies — Causes random hitches when pages swap to/from disk. Especially bad if page file is on a drive with low free space (can't grow) or on an HDD. A page file on a nearly-full drive can cause multi-second freezes when Windows can't allocate swap fast enough.
 
@@ -327,7 +364,7 @@ $cs | Set-CimInstance -Property @{AutomaticManagedPagefile = $true}
 
 ## Minecraft JVM Flags
 
-**Detection:** Check `wmic process where "name='javaw.exe'" get CommandLine`.
+**Detection:** Check `Get-CimInstance Win32_Process | Where-Object Name -eq 'javaw.exe' | Select-Object -ExpandProperty CommandLine`.
 
 **Known bad patterns:**
 | Pattern | Problem |
@@ -340,8 +377,9 @@ $cs | Set-CimInstance -Property @{AutomaticManagedPagefile = $true}
 
 **Recommended client GC (Shenandoah):**
 ```
--XX:+UseShenandoahGC -XX:ShenandoahGCMode=iu -XX:ShenandoahGuaranteedGCInterval=1000000 -XX:AllocatePrefetchStyle=1
+-XX:+UseShenandoahGC -XX:ShenandoahGuaranteedGCInterval=1000000 -XX:AllocatePrefetchStyle=1
 ```
+Note: `ShenandoahGCMode=iu` was experimental (required `-XX:+UnlockExperimentalVMOptions`) and has been removed from recent JDKs — adding it on Java 21+ fails JVM startup. Plain Shenandoah is the safe form.
 
 **Recommended client GC (G1GC, Java 21):**
 ```
@@ -522,7 +560,7 @@ Stops NEW install jobs from queuing. Does NOT abort current TiWorker (it's spawn
 ```powershell
 (Get-ItemProperty 'HKLM:\SYSTEM\CurrentControlSet\Control\GraphicsDrivers' -Name HwSchMode -ErrorAction SilentlyContinue).HwSchMode
 ```
-Value 2 = on, 1 = off, missing = default off.
+Value 2 = on, 1 = off, missing = OS default (Win11 with modern NVIDIA drivers typically defaults ON for supported GPUs — verify in Settings > System > Display > Graphics > Default graphics settings rather than assuming off).
 
 **Impact / 2026 consensus:** Should be ON for RTX 30-series and newer, especially when DLSS Frame Generation is in use (FG explicitly requires HAGS for best results on RTX 40+/50). Net-zero or small positive impact in most non-FG titles. Reserves a small chunk of VRAM (~500 MB).
 
@@ -544,11 +582,9 @@ Reboot.
 
 ## NVIDIA App "Game Filters and Photo Mode" Tax
 
-**Detection:** NVIDIA App is installed (replaces GeForce Experience). The "Game Filters and Photo Mode" feature is enabled by default.
+**Status: HISTORICAL — fixed by NVIDIA.** The up-to-15% FPS loss from the filter injection layer (Tom's Hardware tested, NVIDIA acknowledged, late 2024) was fixed in NVIDIA App updates shortly after (11.0.1.x, Dec 2024). Do NOT report this as a current perf issue on an up-to-date NVIDIA App.
 
-**Impact:** Tom's Hardware tested + NVIDIA officially acknowledged: up to 15% FPS loss in games due to filter injection layer loaded into every render pipeline, even when filters aren't being used. NVIDIA App also uses 200-300 MB at idle vs GeForce Experience's 80-150 MB.
-
-**Fix (user's hands):** NVIDIA App → Settings → uncheck "Enable Game Filters and Photo Mode". Or uninstall NVIDIA App entirely and use bare driver via [nvcleanstall](https://www.techpowerup.com/nvcleanstall/) — saves ~250 MB and removes the filter layer completely.
+**Still relevant:** only if the installed NVIDIA App is a late-2024 build (check its Settings > About). Disabling "Game Filters and Photo Mode" on current versions is optional hygiene, not a perf fix. NVIDIA App idle footprint (~200-300 MB) remains; [nvcleanstall](https://www.techpowerup.com/nvcleanstall/) for bare-driver installs is still valid for minimal setups.
 
 **Verify:** `tasklist | findstr /I "NVIDIA App Container"` — should be fewer/no processes after disabling.
 
@@ -566,3 +602,51 @@ https://international.download.nvidia.com/Windows/581.94hf/581.94-desktop-notebo
 ```
 
 Most current Game Ready drivers (2026+) include the fix.
+
+---
+
+## Unvalidated VRR Monitor — G-Sync Silently Off
+
+**Detection:** monitor is adaptive-sync capable (EDID continuous-frequency bit set, plus a Display Range Limits descriptor giving a VRR window such as 48-144) but is **not** on NVIDIA's validated "G-SYNC Compatible" list. For those panels the driver requires a **per-display** enable that the global "Enable G-SYNC" setting does not provide, so VRR can be silently inactive while every global setting looks correct.
+
+**Impact:** HIGH — no VRR at all: tearing, or V-Sync latency, plus judder below the refresh cap. Easy to miss because NVCP's global page looks right and `.nip` exports show G-Sync enabled.
+
+**Check (over SSH, GPU-side NVAPI):**
+```
+NvAPI_EnumPhysicalGPUs -> NvAPI_GPU_GetConnectedDisplayIds -> NvAPI_DISP_GetAdaptiveSyncData
+flags bit0 = bDisableAdaptiveSync (1 = adaptive sync DISABLED for that display)
+maxFrameInterval in us gives the VRR floor (20583 us = 48 Hz); 0 = panel has no VRR range
+```
+Verified twice: one machine had a 4K120 panel with `bDisableAdaptiveSync=1` (VRR dead) while a second monitor on the same GPU was fine; another machine's 4K144 panel was correctly enabled with a 48 Hz floor.
+
+**Fix (needs the user's hands):** NVCP -> Display -> Set up G-SYNC -> "Enable settings for the selected display model" with that monitor selected. `NvAPI_DISP_SetAdaptiveSyncData` (0x3EEBBA1D, flags=0) flips it live, but persistence across reboot is unconfirmed — re-check after reboot.
+
+**Verify:** enable the G-SYNC Indicator overlay (NVCP -> Display menu) and launch a game.
+
+**Caveat:** some non-certified panels flicker in menus/loading screens with VRR on. If so, that display genuinely should stay off.
+
+---
+
+## HDR Looks "Washed Out / Grey / Dull"
+
+**The most common HDR complaint, and usually three separate causes stacked.**
+
+**Detection — establish the panel's real tier first:**
+- Decode the EDID CTA-861 HDR Static Metadata block (extension block at byte 128, extended tag 6):
+  - EOTF byte: bit2 = PQ/HDR10 supported, bit3 = HLG
+  - Max luminance = `50 * 2^(code/32)` · Min luminance = `max * (code/255)^2 / 100`
+- Check certification: **FreeSync Premium is not an HDR tier** (Premium *Pro* is). No DisplayHDR certification + no local dimming (FALD) = "HDR10 compatible", not an HDR performer.
+- Current state: `NvAPI_Disp_HdrColorControl` (GET) returns HDR mode, colour format, dynamic range, bpc.
+
+**Rule of thumb:** under ~600 nits peak with no local dimming, HDR will look *flatter* than SDR no matter how it is configured. Say so plainly rather than tuning forever.
+
+**Causes, in order of contribution:**
+1. **Paper white / SDR content brightness too high** — with Windows HDR on, all SDR content (desktop, browser, chat, SDR games) is tone-mapped through the *SDR content brightness* slider. Default is often wrong and produces exactly the grey, faded desktop. In-game the equivalent slider is "paper white"/"UI brightness": **100-200 nits** is the normal range.
+2. **In-game peak luminance set above the panel** — a game defaulting to 1000 nits on a 500-nit display compresses the whole tone curve. Set peak to the panel's measured peak.
+3. **Never calibrated** — the free **Windows HDR Calibration** app (Microsoft Store) measures perceptually and writes a profile many games read. EDID values are manufacturer-declared and optimistic.
+4. **Auto HDR off** (`HKCU\Software\Microsoft\DirectX\UserGpuPreferences` -> `DirectXUserGlobalSettings`, `AutoHDREnable=0`) — SDR games stay SDR while the desktop shifts to HDR, so everything looks flatter and no game gains anything.
+5. **Stale/custom ICC profile** applied while HDR is active (`HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion\ICM\ProfileAssociations\Display`).
+
+**Best structural fix:** don't leave the desktop in HDR at all. Tools such as **PyAutoActions** enable HDR only while a configured game runs and revert to SDR on exit, which removes cause 1 for everything outside games. They run in the user's session (also convenient when the audit is remote).
+
+**Per-game note:** titles with their own HDR calibration screens (Battlefield, RDR2, Elden Ring, most modern AAA) do **not** inherit the Windows calibration — each needs setting once.
