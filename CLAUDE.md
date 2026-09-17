@@ -20,6 +20,7 @@ README.md                         # Public-facing install instructions
 | game-tuning | Per-game optimization: G-Sync 101 stack, DLSS/Frame Gen, Reflex, per-app NVCP profiles, launch options, in-game settings. CS2 cookbook in references/. |
 | solved-problem | Prior-art research before building custom. Parallel subagents across GitHub/Reddit/HN/awesome-lists/blogs, ranked tools with pros/cons, recommendation. |
 | service-oriented-architecture | Clean Architecture for backend services. Domain-first folders, layer protocols, tiered mappers, immutable entities, typed outcome unions, lightweight CRUD mode, import-linter enforcement. |
+| wow-setup | WoW retail install management from outside the game: addon inventory, per-character AddOns.txt, SavedVariables parsing (scripts/wow_sv.py), CurseForge app deep-link installs, wago.io strings (scripts/wago_fetch.py), Midnight 12.x addon landscape in references/. |
 
 ## MCP Servers (configured locally per machine, not in plugin)
 
