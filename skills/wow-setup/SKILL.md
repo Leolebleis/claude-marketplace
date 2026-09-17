@@ -60,6 +60,7 @@ Read and change a World of Warcraft retail install from outside the game: addon 
 | Dropping addon folders in by hand when the CurseForge app manages the install | Install through the app so it can update them |
 | Assuming the addon failed because it is not in the in-game list | The list groups by category headers; use its search box |
 | Treating "only enabled for some characters" as an error | It is the mixed-state tooltip in All Characters mode |
+| Telling the user to change UI Scale before an Edit Mode import | Import at the layout author's scale, or rescale the string with `scripts/editmode_rescale.py` |
 | Recommending profiles from memory | Check `modified` date on wago; many pre-Midnight profiles are abandoned |
 | Hunting the out-of-date prompt by reading `_Mainline.toc` only | Run `python scripts/toc_audit.py <_retail_>`: it applies Blizzard's rule (enabled addons, every TOC, DefaultState) |
 | Treating `AddOns.txt` as the enabled list | It misses newly installed addons and keeps uninstalled ones; join it with the AddOns folder |
