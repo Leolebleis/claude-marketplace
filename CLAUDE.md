@@ -34,3 +34,5 @@ README.md                         # Public-facing install instructions
 - **Never push directly to main.** Create a branch and open a PR.
 - **Update README.md** when adding or removing skills.
 - **Update the Skills table in this CLAUDE.md** when adding or removing skills.
+- **Test skills with subagents** (superpowers:writing-skills): one baseline run without the skill, scenario runs with it, refactor from their feedback, re-test. Record tool-call counts before and after in the PR.
+- **Skill scripts are stdlib-only Python** under `skills/<name>/scripts/`; run them against real data before committing.
