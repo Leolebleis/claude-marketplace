@@ -1,4 +1,6 @@
-# WoW retail install layout and facts (verified 2026-09, patch 12.1)
+# WoW retail install layout and facts
+
+**Verified on 2026-09-17 against client 12.1.0.69814 (Midnight Season 2).** The file layout section is stable; everything under "Addon sources" and "Midnight addon landscape" is a snapshot of that date. Addon status, profile maintainers and Blizzard API policy change every patch, so treat those sections as suspect once the client is past 12.1 and re-verify before recommending anything.
 
 ## Paths
 
@@ -50,7 +52,7 @@ Client build: `<WoW>\.build.info` (one level above `_retail_`), Version column, 
 - Reading wago listing pages needs JavaScript; use search engines or known ids instead. Wowhead and luxthos.com article bodies are also JS-rendered; rely on search snippets or the wago description text.
 - cfwidget also returns per-file `versions` lists, which is the quickest way to see whether an addon has a build for the current patch.
 
-## Midnight (12.x) addon landscape
+## Midnight (12.x) addon landscape (snapshot 2026-09-17, patch 12.1.0)
 
 - Secret values: addons display combat state but cannot compute on it. WeakAuras and Hekili ended on retail. Built-in replacements: Cooldown Manager, Assisted Highlight, damage meter, boss warnings timeline.
 - Nameplates: Platynator is built for the new API and can colour off-tank threat; Plater cannot. Threat Plates disabled its threat logic.

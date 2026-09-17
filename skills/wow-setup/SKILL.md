@@ -9,6 +9,8 @@ Read and change a World of Warcraft retail install from outside the game: addon 
 
 **Core principle:** the game owns its files. Everything under `WTF\` is rewritten on logout and `/reload`, so file edits only stick when `Wow.exe` is closed, and profile imports only happen through the addon's in-game Import dialog.
 
+**Freshness:** the file mechanics here are stable. Every claim about which addons are alive, which profiles are maintained and what the API allows was verified on 2026-09-17 for patch 12.1.0. Check the client build first (`<WoW>\.build.info`); if it is newer than 12.1, re-verify those claims through research before repeating them.
+
 ## When to Use
 
 - "What addons / profiles do I have?", "which character is my DK?"
